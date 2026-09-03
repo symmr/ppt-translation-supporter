@@ -5,6 +5,12 @@
 
 形式は [Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に準拠。
 
+## [1.0.2] - 2026-09-03
+
+### Added
+
+- ブラウザ確認用のサンプル PPTX（`docs/sample/smoke-test.pptx`）
+
 ## [1.0.1] - 2026-09-03
 
 ### Added

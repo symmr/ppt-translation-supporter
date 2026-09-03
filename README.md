@@ -16,6 +16,19 @@ PowerPoint (`.pptx`) のテキストをブラウザ内で抽出し、翻訳文�
 
 翻訳そのものはこのページでは行いません。コピーしたプロンプトを LLM に渡し、返ってきたテキストをドロップしてください。
 
+## サンプル
+
+ブラウザ確認用の小さなデッキ:
+
+- [docs/sample/smoke-test.pptx](docs/sample/smoke-test.pptx)
+- Pages: https://symmr.github.io/ppt-exjector/sample/smoke-test.pptx
+
+2 枚。見出し、色の違う run（`[0]...[/0]`）、表、スピーカーノート、製品名混在。再生成:
+
+```sh
+python test/fixtures/build_smoke_pptx.py
+```
+
 ## 開発
 
 ```sh
