@@ -33,6 +33,11 @@ function show(el, text, className) {
   if (className) el.className = `msg ${className}`;
 }
 
+function logError(context, err) {
+  console.error(`[ppt-translation-supporter] ${context}:`, err);
+  if (err && err.cause) console.error(`[ppt-translation-supporter] ${context} (cause):`, err.cause);
+}
+
 function clearMessages() {
   show(errorMsg, "");
   show(warnMsg, "");
@@ -71,8 +76,13 @@ function bindDrop(zone, onFile, acceptTest) {
 }
 
 async function copyText(text) {
-  await navigator.clipboard.writeText(text);
-  show(okMsg, "コピーしました。");
+  try {
+    await navigator.clipboard.writeText(text);
+    show(okMsg, "コピーしました。");
+  } catch (err) {
+    logError("クリップボードへのコピー", err);
+    show(errorMsg, `コピーに失敗しました（${err.name || "Error"}）。テキストを選択して手動でコピーしてください。`);
+  }
 }
 
 function downloadBlob(blob, filename) {
@@ -96,6 +106,7 @@ async function handlePptx(file) {
     sourceZip = await JSZip.loadAsync(await file.arrayBuffer());
     extracted = await extractTextsFromZip(sourceZip);
   } catch (err) {
+    logError("PPTX の抽出", err);
     show(errorMsg, `抽出に失敗しました: ${err.message || err}`);
     return;
   }
@@ -121,6 +132,7 @@ async function handleTxt(file) {
   try {
     source = await file.text();
   } catch (err) {
+    logError("翻訳テキストファイルの読み込み", err);
     show(errorMsg, `テキストの読み込みに失敗しました: ${err.message || err}`);
     return;
   }
@@ -144,14 +156,18 @@ async function applyTranslation(source, sourceLabel) {
 
   const translations = parseUidDelimitedText(text);
   const report = validateTranslations(extracted.metadata, translations);
+  const matched = report.expected - report.missing.length;
   txtMeta.hidden = false;
-  txtMeta.textContent = `${sourceLabel} · 翻訳 ${report.got} 件 / 抽出 ${report.expected} 件`;
+  txtMeta.textContent = report.ok
+    ? `${sourceLabel} · 翻訳 ${report.got} 件 / 抽出 ${report.expected} 件`
+    : `${sourceLabel} · 一致 ${matched} 件 / 抽出 ${report.expected} 件`;
 
+  let mismatchNote = "";
   if (!report.ok) {
     const bits = [];
     if (report.missing.length) bits.push(`不足 ${report.missing.slice(0, 8).join(", ")}${report.missing.length > 8 ? " …" : ""}`);
     if (report.extra.length) bits.push(`余分 ${report.extra.slice(0, 5).join(", ")}`);
-    show(warnMsg, `uid が一致しません。見つかった分だけ書き戻します。${bits.join(" / ")}`);
+    mismatchNote = `uid が一致しません。見つかった分だけ書き戻します。${bits.join(" / ")}`;
   }
 
   try {
@@ -169,8 +185,14 @@ async function applyTranslation(source, sourceLabel) {
     setStepState(step3, "is-done");
     setStepState(step4, "");
     downloadBlob(resultBlob, resultName);
-    show(okMsg, "書き戻しました。ダウンロードが始まらない場合はボタンを押してください。");
+    if (mismatchNote) {
+      show(warnMsg, `${mismatchNote}。書き戻しは完了しました。ダウンロードが始まらない場合はボタンを押してください。`);
+    } else {
+      show(okMsg, "書き戻しました。ダウンロードが始まらない場合はボタンを押してください。");
+    }
   } catch (err) {
+    logError("PPTX への書き戻し", err);
+    if (mismatchNote) show(warnMsg, mismatchNote);
     show(errorMsg, `書き戻しに失敗しました: ${err.message || err}`);
   }
 }

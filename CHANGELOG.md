@@ -1,9 +1,38 @@
 # Changelog
 
-[PPT Translate Supporter](https://symmr.github.io/ppt-translate-supporter/) の変更履歴。  
-リポジトリ: [github.com/symmr/ppt-translate-supporter](https://github.com/symmr/ppt-translate-supporter/)
+[PPT Translation Supporter](https://symmr.github.io/ppt-translation-supporter/) の変更履歴。  
+リポジトリ: [github.com/symmr/ppt-translation-supporter](https://github.com/symmr/ppt-translation-supporter/)
 
 形式は [Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に準拠。
+
+## [1.3.1] - 2026-09-03
+
+### Changed
+
+- リポジトリ名を `ppt-translate-supporter` から `ppt-translation-supporter` に変更（タイトルの英語表記に合わせた）。GitHub Pages の URL も `https://symmr.github.io/ppt-translation-supporter/` に変更（旧URLからは自動的にリダイレクトされます）
+
+## [1.3.0] - 2026-09-03
+
+### Fixed
+
+- XML 解析エラーの検出漏れを修正。ブラウザによっては `<parsererror>` がドキュメントルートではなく途中の子要素として挿入されるため、ルート要素だけを見ていた従来のチェックでは検出できず、壊れたスライドが警告なしにテキスト欠落のまま抽出されることがあった
+
+### Changed
+
+- 抽出・書き戻しの失敗時、どのファイル（スライド/ノート）で失敗したかをエラーメッセージに含めるように変更
+- XML 解析失敗時のエラーメッセージに、パーサーが返す詳細（該当行・列・原因）を含めるように変更
+- 抽出・書き戻し・コピーの失敗時、`console.error` でスタックトレースと原因（cause）をブラウザの開発者コンソールに出力するように変更
+- ノートのテキスト抽出に失敗した場合（従来は無条件に無視していた）、`console.warn` で対象パスとエラー内容を出力するように変更
+
+## [1.2.0] - 2026-09-03
+
+### Changed
+
+- 名称を PPT Translation Supporter に修正（英語として自然な表記に）
+- トップの説明文とステップ2に「翻訳自体はこのツールでは行わない」旨を明記し、LLM に貼り付ける手順を明確化
+- uid 不一致時、件数表示を実際に一致した件数（`一致 X 件 / 抽出 Y 件`）に変更し、見かけ上の件数一致による誤解を防止
+- uid 不一致時は成功メッセージと警告メッセージを分けて出さず、1つの警告メッセージに完了状況をまとめて表示
+- クリップボードへのコピー失敗時にエラーメッセージを表示するよう修正（従来は無反応だった）
 
 ## [1.1.0] - 2026-09-03
 

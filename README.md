@@ -1,9 +1,9 @@
-# PPT Translate Supporter
+# PPT Translation Supporter
 
 PowerPoint (`.pptx`) のテキストをブラウザ内で抽出し、翻訳文を書き戻すツール。ファイルはサーバへ送信されません。
 
-- **Web:** https://symmr.github.io/ppt-translate-supporter/
-- **GitHub:** https://github.com/symmr/ppt-translate-supporter/
+- **Web:** https://symmr.github.io/ppt-translation-supporter/
+- **GitHub:** https://github.com/symmr/ppt-translation-supporter/
 
 フォント統一・画像圧縮・孤立メディア削除は [PPT Finalizer](https://symmr.github.io/ppt-finalizer/) で行います。
 

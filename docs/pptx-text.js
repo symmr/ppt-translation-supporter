@@ -42,10 +42,29 @@ function parseXml(xml) {
   const Parser = getDOMParser();
   const doc = new Parser().parseFromString(xml, "application/xml");
   const root = doc.documentElement;
-  if (root && (root.localName === "parsererror" || root.nodeName === "parsererror")) {
-    throw new Error("XML の解析に失敗しました");
+  if (!root) {
+    throw new Error("XML の解析に失敗しました（空のドキュメント）");
+  }
+  // Some parsers (e.g. Chromium) nest <parsererror> as a child of the root
+  // instead of replacing it, so a root-only check misses those failures.
+  const parserErrors = typeof doc.getElementsByTagName === "function"
+    ? doc.getElementsByTagName("parsererror")
+    : null;
+  if (root.localName === "parsererror" || root.nodeName === "parsererror" || (parserErrors && parserErrors.length)) {
+    const detail = parserErrors && parserErrors.length
+      ? String(parserErrors[0].textContent || "").trim().replace(/\s+/g, " ").slice(0, 300)
+      : "";
+    throw new Error(`XML の解析に失敗しました${detail ? `: ${detail}` : ""}`);
   }
   return doc;
+}
+
+function parseXmlAt(xml, path) {
+  try {
+    return parseXml(xml);
+  } catch (err) {
+    throw new Error(`${path} の解析に失敗しました: ${err.message || err}`, { cause: err });
+  }
 }
 
 function serializeXml(doc) {
@@ -411,7 +430,7 @@ async function extractTextsFromZip(zip) {
     const slidePath = slides[slideIdx];
     const slideFile = zip.file(slidePath);
     if (!slideFile) continue;
-    const doc = parseXml(await slideFile.async("string"));
+    const doc = parseXmlAt(await slideFile.async("string"), slidePath);
     const tree = getSpTree(doc);
     if (tree) {
       walkShapes(tree, [], (el, shapePath) => {
@@ -424,10 +443,11 @@ async function extractTextsFromZip(zip) {
     const notesFile = zip.file(notesPath);
     if (!notesFile) continue;
     try {
-      const notesDoc = parseXml(await notesFile.async("string"));
+      const notesDoc = parseXmlAt(await notesFile.async("string"), notesPath);
       collectFromNotes(notesDoc, slidePath, notesPath, texts, metadata, uidRef);
     } catch (err) {
-      // empty / malformed notes must not abort extract
+      // empty / malformed notes must not abort extract; log for diagnosis
+      console.warn(`[pptx-text] notes の抽出をスキップしました (${notesPath}):`, err);
     }
   }
 
@@ -480,7 +500,7 @@ async function injectTextsToZip(zip, translations, metadata) {
       missing += locs.length;
       continue;
     }
-    const doc = parseXml(await entry.async("string"));
+    const doc = parseXmlAt(await entry.async("string"), path);
     for (const loc of locs) {
       if (!Object.prototype.hasOwnProperty.call(translations, loc.id)) {
         missing += 1;

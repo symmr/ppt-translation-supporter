@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>PPT Translate Supporter</title>
+  <title>PPT Translation Supporter</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js" integrity="sha384-+mbV2IY1Zk/X1p/nWllGySJSUN8uMs+gUAN10Or95UBH0fpj6GfKgPmgC5EXieXG" crossorigin="anonymous"></script>
   <style>
@@ -170,8 +170,8 @@
 </head>
 <body>
   <main>
-    <h1>PPT Translate Supporter</h1>
-    <p class="lede">ブラウザ内で PowerPoint のテキストを抽出し、翻訳文を書き戻します。ファイルはサーバに送られません。フォント統一は <a href="https://symmr.github.io/ppt-finalizer/" target="_blank" rel="noopener noreferrer">PPT Finalizer</a> で行います。</p>
+    <h1>PPT Translation Supporter</h1>
+    <p class="lede">ブラウザ内で PowerPoint のテキストを抽出し、翻訳文を書き戻します。<strong>翻訳自体はこのツールでは行いません。</strong>抽出したプロンプトと本文を ChatGPT や Claude などの LLM に渡し、返ってきた訳文をこのツールで書き戻してください。ファイルはサーバに送られません。フォント統一は <a href="https://symmr.github.io/ppt-finalizer/" target="_blank" rel="noopener noreferrer">PPT Finalizer</a> で行います。</p>
 
     <section class="step" id="step1">
       <div class="step-head">
@@ -191,6 +191,7 @@
         <h2>テキスト抽出とプロンプト</h2>
       </div>
       <p class="meta" id="extractMeta"></p>
+      <p class="meta">下のプロンプトと本文をコピーし、ChatGPT や Claude などの LLM に貼り付けて翻訳してください。返ってきた訳文は次のステップで貼り戻します。</p>
       <label for="promptBox">翻訳プロンプト</label>
       <textarea id="promptBox" class="prompt-box" readonly></textarea>
       <label for="extractBox" style="display:block;margin-top:0.75rem;">抽出テキスト</label>
@@ -242,7 +243,7 @@
       本ツールのご利用および処理結果については、利用者ご自身の責任において行ってください。
     </p>
     <p class="app-version" id="appVersionLine" hidden>
-      <a href="https://github.com/symmr/ppt-translate-supporter/" target="_blank" rel="noopener noreferrer">GitHub</a>
+      <a href="https://github.com/symmr/ppt-translation-supporter/" target="_blank" rel="noopener noreferrer">GitHub</a>
       · <span id="appVersion"></span>
     </p>
   </main>
