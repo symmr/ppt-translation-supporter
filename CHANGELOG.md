@@ -1,9 +1,19 @@
 # Changelog
 
-[PPT Translate Supporter](https://symmr.github.io/ppt-translate-supporter/) の変更履歴。  
+[PPT Translation Supporter](https://symmr.github.io/ppt-translate-supporter/) の変更履歴。  
 リポジトリ: [github.com/symmr/ppt-translate-supporter](https://github.com/symmr/ppt-translate-supporter/)
 
 形式は [Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に準拠。
+
+## [1.2.0] - 2026-09-03
+
+### Changed
+
+- 名称を PPT Translation Supporter に修正（英語として自然な表記に）
+- トップの説明文とステップ2に「翻訳自体はこのツールでは行わない」旨を明記し、LLM に貼り付ける手順を明確化
+- uid 不一致時、件数表示を実際に一致した件数（`一致 X 件 / 抽出 Y 件`）に変更し、見かけ上の件数一致による誤解を防止
+- uid 不一致時は成功メッセージと警告メッセージを分けて出さず、1つの警告メッセージに完了状況をまとめて表示
+- クリップボードへのコピー失敗時にエラーメッセージを表示するよう修正（従来は無反応だった）
 
 ## [1.1.0] - 2026-09-03
 

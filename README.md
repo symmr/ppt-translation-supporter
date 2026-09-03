@@ -1,4 +1,4 @@
-# PPT Translate Supporter
+# PPT Translation Supporter
 
 PowerPoint (`.pptx`) のテキストをブラウザ内で抽出し、翻訳文を書き戻すツール。ファイルはサーバへ送信されません。
 
