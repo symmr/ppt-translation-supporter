@@ -1,9 +1,9 @@
-# PPT ExJector
+# PPT Translate Supporter
 
 PowerPoint (`.pptx`) のテキストをブラウザ内で抽出し、翻訳文を書き戻すツール。ファイルはサーバへ送信されません。
 
-- **Web:** https://symmr.github.io/ppt-exjector/
-- **GitHub:** https://github.com/symmr/ppt-exjector/
+- **Web:** https://symmr.github.io/ppt-translate-supporter/
+- **GitHub:** https://github.com/symmr/ppt-translate-supporter/
 
 フォント統一・画像圧縮・孤立メディア削除は [PPT Finalizer](https://symmr.github.io/ppt-finalizer/) で行います。
 
@@ -14,16 +14,11 @@ PowerPoint (`.pptx`) のテキストをブラウザ内で抽出し、翻訳文�
 3. 翻訳済みテキスト（`uid_0001` 行を残したもの）をドロップするか、画面に貼り付ける
 4. `_translated.pptx` をダウンロードする
 
-翻訳そのものはこのページでは行いません。コピーしたプロンプトを LLM に渡し、返ってきたテキストをドロップしてください。
+翻訳そのものはこのページでは行いません。コピーしたプロンプトを LLM に渡し、返ってきたテキストをドロップまたは貼り付けてください。
 
 ## サンプル
 
-ブラウザ確認用の小さなデッキ:
-
-- [docs/sample/smoke-test.pptx](docs/sample/smoke-test.pptx)
-- Pages: https://symmr.github.io/ppt-exjector/sample/smoke-test.pptx
-
-2 枚。見出し、色の違う run（`[0]...[/0]`）、表、スピーカーノート、製品名混在。再生成:
+手動確認用の小さなデッキは `test/fixtures/smoke-test.pptx`。2 枚。見出し、色の違う run（`[0]...[/0]`）、表、スピーカーノート、製品名混在。再生成:
 
 ```sh
 python test/fixtures/build_smoke_pptx.py

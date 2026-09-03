@@ -10,7 +10,6 @@ from pptx.util import Inches, Pt
 
 ROOT = Path(__file__).resolve().parents[2]
 OUTPUTS = [
-    ROOT / "docs" / "sample" / "smoke-test.pptx",
     ROOT / "test" / "fixtures" / "smoke-test.pptx",
 ]
 

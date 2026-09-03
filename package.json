@@ -1,8 +1,8 @@
 {
-  "name": "ppt-exjector",
+  "name": "ppt-translate-supporter",
   "private": true,
-  "version": "1.0.0",
-  "description": "Browser extract/inject for PowerPoint text (ExJector)",
+  "version": "1.1.0",
+  "description": "Browser extract/inject for PowerPoint translation (PPT Translate Supporter)",
   "scripts": {
     "test": "node --test test/pptx-text.test.js"
   },

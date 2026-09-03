@@ -1,9 +1,16 @@
 # Changelog
 
-[PPT ExJector](https://symmr.github.io/ppt-exjector/) の変更履歴。  
-リポジトリ: [github.com/symmr/ppt-exjector](https://github.com/symmr/ppt-exjector/)
+[PPT Translate Supporter](https://symmr.github.io/ppt-translate-supporter/) の変更履歴。  
+リポジトリ: [github.com/symmr/ppt-translate-supporter](https://github.com/symmr/ppt-translate-supporter/)
 
 形式は [Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に準拠。
+
+## [1.1.0] - 2026-09-03
+
+### Changed
+
+- 名称を PPT Translate Supporter に変更
+- サンプル PPTX を Pages から外し、`test/fixtures` のみに置く
 
 ## [1.0.2] - 2026-09-03
 
