@@ -113,15 +113,10 @@ async function handlePptx(file) {
   step4.hidden = true;
   setStepState(step4, "is-wait");
   txtMeta.hidden = true;
-  show(okMsg, "抽出しました。プロンプトと本文をコピーして翻訳し、訳文 txt をドロップしてください。");
+  show(okMsg, "抽出しました。プロンプトと本文をコピーして翻訳し、訳文をドロップまたは貼り付けてください。");
 }
 
 async function handleTxt(file) {
-  clearMessages();
-  if (!sourceZip || !extracted) {
-    show(errorMsg, "先に PPTX を置いてください。");
-    return;
-  }
   let source;
   try {
     source = await file.text();
@@ -129,11 +124,28 @@ async function handleTxt(file) {
     show(errorMsg, `テキストの読み込みに失敗しました: ${err.message || err}`);
     return;
   }
+  await applyTranslation(source, file.name);
+}
 
-  const translations = parseUidDelimitedText(source);
+async function applyTranslation(source, sourceLabel) {
+  clearMessages();
+  if (!sourceZip || !extracted) {
+    show(errorMsg, "先に PPTX を置いてください。");
+    return;
+  }
+  let text = String(source || "").replace(/^\uFEFF/, "").trim();
+  if (text.startsWith("```")) {
+    text = text.replace(/^```[a-zA-Z]*\r?\n/, "").replace(/\r?\n```\s*$/, "");
+  }
+  if (!text.trim()) {
+    show(errorMsg, "翻訳テキストが空です。");
+    return;
+  }
+
+  const translations = parseUidDelimitedText(text);
   const report = validateTranslations(extracted.metadata, translations);
   txtMeta.hidden = false;
-  txtMeta.textContent = `${file.name} · 翻訳 ${report.got} 件 / 抽出 ${report.expected} 件`;
+  txtMeta.textContent = `${sourceLabel} · 翻訳 ${report.got} 件 / 抽出 ${report.expected} 件`;
 
   if (!report.ok) {
     const bits = [];
@@ -175,6 +187,7 @@ function resetAll() {
   txtMeta.hidden = true;
   extractBox.value = "";
   promptBox.value = "";
+  document.getElementById("pasteBox").value = "";
   step2.hidden = true;
   step3.hidden = true;
   step4.hidden = true;
@@ -196,6 +209,9 @@ fileInput.addEventListener("change", () => {
 txtInput.addEventListener("change", () => {
   const file = txtInput.files?.[0];
   if (file) handleTxt(file);
+});
+document.getElementById("applyPasteBtn").addEventListener("click", () => {
+  applyTranslation(document.getElementById("pasteBox").value, "貼り付け");
 });
 
 document.getElementById("copyPromptBtn").addEventListener("click", () => {

@@ -205,11 +205,16 @@
     <section class="step is-wait" id="step3" hidden>
       <div class="step-head">
         <span class="step-num">3</span>
-        <h2>翻訳したテキストをドロップ</h2>
+        <h2>翻訳したテキストを渡す</h2>
       </div>
       <div class="dropzone" id="txtDrop" tabindex="0" role="button">
         <strong>ここに翻訳済み .txt をドロップ</strong>
-        <p>uid 行を残したまま翻訳したファイル</p>
+        <p>またはクリックして選択</p>
+      </div>
+      <label for="pasteBox" style="display:block;margin-top:0.9rem;">またはここに貼り付け</label>
+      <textarea id="pasteBox" class="preview-box" placeholder="uid_0001&#10;訳文&#10;uid_0002&#10;…"></textarea>
+      <div class="row">
+        <button type="button" class="primary" id="applyPasteBtn">貼り付けたテキストで書き戻す</button>
       </div>
       <p class="meta" id="txtMeta" hidden></p>
     </section>
