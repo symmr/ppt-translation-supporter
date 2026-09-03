@@ -33,6 +33,11 @@ function show(el, text, className) {
   if (className) el.className = `msg ${className}`;
 }
 
+function logError(context, err) {
+  console.error(`[ppt-translate-supporter] ${context}:`, err);
+  if (err && err.cause) console.error(`[ppt-translate-supporter] ${context} (cause):`, err.cause);
+}
+
 function clearMessages() {
   show(errorMsg, "");
   show(warnMsg, "");
@@ -75,7 +80,8 @@ async function copyText(text) {
     await navigator.clipboard.writeText(text);
     show(okMsg, "コピーしました。");
   } catch (err) {
-    show(errorMsg, "コピーに失敗しました。テキストを選択して手動でコピーしてください。");
+    logError("クリップボードへのコピー", err);
+    show(errorMsg, `コピーに失敗しました（${err.name || "Error"}）。テキストを選択して手動でコピーしてください。`);
   }
 }
 
@@ -100,6 +106,7 @@ async function handlePptx(file) {
     sourceZip = await JSZip.loadAsync(await file.arrayBuffer());
     extracted = await extractTextsFromZip(sourceZip);
   } catch (err) {
+    logError("PPTX の抽出", err);
     show(errorMsg, `抽出に失敗しました: ${err.message || err}`);
     return;
   }
@@ -125,6 +132,7 @@ async function handleTxt(file) {
   try {
     source = await file.text();
   } catch (err) {
+    logError("翻訳テキストファイルの読み込み", err);
     show(errorMsg, `テキストの読み込みに失敗しました: ${err.message || err}`);
     return;
   }
@@ -183,6 +191,7 @@ async function applyTranslation(source, sourceLabel) {
       show(okMsg, "書き戻しました。ダウンロードが始まらない場合はボタンを押してください。");
     }
   } catch (err) {
+    logError("PPTX への書き戻し", err);
     if (mismatchNote) show(warnMsg, mismatchNote);
     show(errorMsg, `書き戻しに失敗しました: ${err.message || err}`);
   }
