@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PPT ExJector</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js" integrity="sha384-+mbV2IY1Zk/X1p/nWllGySJSUN8uMs+gUAN10Or95UBH0fpj6GfKgPmgC5EXieXG" crossorigin="anonymous"></script>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f5f5f4;
+      --surface: #fff;
+      --border: #d6d3d1;
+      --text: #1c1917;
+      --muted: #78716c;
+      --accent: #2563eb;
+      --accent-hover: #1d4ed8;
+      --drop: #eff6ff;
+      --ok-bg: #ecfdf5;
+      --ok-text: #166534;
+      --warn-bg: #fffbeb;
+      --warn-text: #92400e;
+      --err-bg: #fef2f2;
+      --err-text: #991b1b;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0c0a09;
+        --surface: #1c1917;
+        --border: #44403c;
+        --text: #fafaf9;
+        --muted: #a8a29e;
+        --accent: #3b82f6;
+        --accent-hover: #60a5fa;
+        --drop: #172554;
+        --ok-bg: #052e16;
+        --ok-text: #86efac;
+        --warn-bg: #422006;
+        --warn-text: #fde68a;
+        --err-bg: #450a0a;
+        --err-text: #fecaca;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Segoe UI", "Noto Sans JP", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+    }
+    main {
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 2rem 1.25rem 3rem;
+    }
+    h1 { font-size: 1.5rem; margin: 0 0 0.35rem; }
+    .lede { color: var(--muted); margin: 0 0 1.5rem; }
+    .step {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1.15rem 1.2rem 1.25rem;
+      margin-bottom: 0.9rem;
+    }
+    .step[hidden] { display: none; }
+    .step-head {
+      display: flex;
+      align-items: baseline;
+      gap: 0.65rem;
+      margin-bottom: 0.75rem;
+    }
+    .step-num {
+      flex: 0 0 auto;
+      width: 1.6rem;
+      height: 1.6rem;
+      border-radius: 999px;
+      background: var(--accent);
+      color: #fff;
+      font-size: 0.85rem;
+      font-weight: 700;
+      display: grid;
+      place-items: center;
+    }
+    .step.is-done .step-num { background: #16a34a; }
+    .step.is-wait .step-num { background: var(--border); color: var(--muted); }
+    .step h2 {
+      margin: 0;
+      font-size: 1.05rem;
+    }
+    .dropzone {
+      border: 1.5px dashed var(--border);
+      border-radius: 10px;
+      padding: 1.4rem 1rem;
+      text-align: center;
+      background: transparent;
+      cursor: pointer;
+    }
+    .dropzone:hover,
+    .dropzone.is-drag {
+      border-color: var(--accent);
+      background: var(--drop);
+    }
+    .dropzone p { margin: 0.2rem 0 0; color: var(--muted); font-size: 0.9rem; }
+    .dropzone strong { color: var(--text); font-size: 1rem; }
+    .row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin-top: 0.85rem;
+    }
+    button, .btn {
+      appearance: none;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--text);
+      border-radius: 8px;
+      padding: 0.45rem 0.8rem;
+      font: inherit;
+      font-size: 0.9rem;
+      cursor: pointer;
+    }
+    button.primary, .btn.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+    button.primary:hover, .btn.primary:hover { background: var(--accent-hover); }
+    button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+    .meta {
+      margin: 0 0 0.75rem;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+    .prompt-box,
+    .preview-box {
+      width: 100%;
+      min-height: 8rem;
+      max-height: 16rem;
+      resize: vertical;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.7rem 0.8rem;
+      font: 0.8rem/1.45 ui-monospace, SFMono-Regular, Consolas, monospace;
+      background: var(--bg);
+      color: var(--text);
+    }
+    .msg {
+      margin: 0.75rem 0 0;
+      padding: 0.65rem 0.75rem;
+      border-radius: 8px;
+      font-size: 0.9rem;
+    }
+    .msg.error { background: var(--err-bg); color: var(--err-text); }
+    .msg.warn { background: var(--warn-bg); color: var(--warn-text); }
+    .msg.ok { background: var(--ok-bg); color: var(--ok-text); }
+    .disclaimer, .app-version {
+      color: var(--muted);
+      font-size: 0.8rem;
+      margin: 1.25rem 0 0;
+    }
+    .app-version a { color: inherit; }
+    #fileInput, #txtInput { display: none; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>PPT ExJector</h1>
+    <p class="lede">ブラウザ内で PowerPoint のテキストを抽出し、翻訳文を書き戻します。ファイルはサーバに送られません。フォント統一は <a href="https://symmr.github.io/ppt-finalizer/" target="_blank" rel="noopener noreferrer">PPT Finalizer</a> で行います。</p>
+
+    <section class="step" id="step1">
+      <div class="step-head">
+        <span class="step-num">1</span>
+        <h2>PPTX を置く</h2>
+      </div>
+      <div class="dropzone" id="pptxDrop" tabindex="0" role="button">
+        <strong>ここに .pptx をドロップ</strong>
+        <p>またはクリックして選択</p>
+      </div>
+      <p class="meta" id="pptxMeta" hidden></p>
+    </section>
+
+    <section class="step is-wait" id="step2" hidden>
+      <div class="step-head">
+        <span class="step-num">2</span>
+        <h2>テキスト抽出とプロンプト</h2>
+      </div>
+      <p class="meta" id="extractMeta"></p>
+      <label for="promptBox">翻訳プロンプト</label>
+      <textarea id="promptBox" class="prompt-box" readonly></textarea>
+      <label for="extractBox" style="display:block;margin-top:0.75rem;">抽出テキスト</label>
+      <textarea id="extractBox" class="preview-box" readonly></textarea>
+      <div class="row">
+        <button type="button" id="copyPromptBtn">プロンプトをコピー</button>
+        <button type="button" id="copyAllBtn">プロンプト＋本文をコピー</button>
+        <button type="button" class="primary" id="downloadTxtBtn">抽出テキストをダウンロード</button>
+      </div>
+    </section>
+
+    <section class="step is-wait" id="step3" hidden>
+      <div class="step-head">
+        <span class="step-num">3</span>
+        <h2>翻訳したテキストをドロップ</h2>
+      </div>
+      <div class="dropzone" id="txtDrop" tabindex="0" role="button">
+        <strong>ここに翻訳済み .txt をドロップ</strong>
+        <p>uid 行を残したまま翻訳したファイル</p>
+      </div>
+      <p class="meta" id="txtMeta" hidden></p>
+    </section>
+
+    <section class="step is-wait" id="step4" hidden>
+      <div class="step-head">
+        <span class="step-num">4</span>
+        <h2>翻訳済み PPTX をダウンロード</h2>
+      </div>
+      <p class="meta" id="resultMeta"></p>
+      <div class="row">
+        <button type="button" class="primary" id="downloadPptxBtn">PPTX をダウンロード</button>
+        <button type="button" id="resetBtn">最初からやり直す</button>
+      </div>
+    </section>
+
+    <p class="msg error" id="errorMsg" hidden></p>
+    <p class="msg warn" id="warnMsg" hidden></p>
+    <p class="msg ok" id="okMsg" hidden></p>
+
+    <input id="fileInput" type="file" accept=".pptx,application/vnd.openxmlformats-officedocument.presentationml.presentation">
+    <input id="txtInput" type="file" accept=".txt,text/plain">
+
+    <p class="disclaimer">
+      本ツールのご利用および処理結果については、利用者ご自身の責任において行ってください。
+    </p>
+    <p class="app-version" id="appVersionLine" hidden>
+      <a href="https://github.com/symmr/ppt-exjector/" target="_blank" rel="noopener noreferrer">GitHub</a>
+      · <span id="appVersion"></span>
+    </p>
+  </main>
+  <script>
+    (async function loadAppScripts() {
+      let version = String(Date.now());
+      try {
+        const res = await fetch("version.json", { cache: "no-store" });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.version) version = data.version;
+        }
+      } catch (_) {}
+      for (const file of ["pptx-text.js", "app.js"]) {
+        await new Promise((resolve, reject) => {
+          const script = document.createElement("script");
+          script.src = `${file}?v=${encodeURIComponent(version)}`;
+          script.onload = resolve;
+          script.onerror = reject;
+          document.body.appendChild(script);
+        });
+      }
+    })();
+  </script>
+</body>
+</html>

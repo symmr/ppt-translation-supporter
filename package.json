@@ -1,0 +1,13 @@
+{
+  "name": "ppt-exjector",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Browser extract/inject for PowerPoint text (ExJector)",
+  "scripts": {
+    "test": "node --test test/pptx-text.test.js"
+  },
+  "devDependencies": {
+    "@xmldom/xmldom": "^0.8.10",
+    "jszip": "^3.10.1"
+  }
+}
