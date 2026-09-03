@@ -1,9 +1,15 @@
 # Changelog
 
-[PPT Translation Supporter](https://symmr.github.io/ppt-translate-supporter/) の変更履歴。  
-リポジトリ: [github.com/symmr/ppt-translate-supporter](https://github.com/symmr/ppt-translate-supporter/)
+[PPT Translation Supporter](https://symmr.github.io/ppt-translation-supporter/) の変更履歴。  
+リポジトリ: [github.com/symmr/ppt-translation-supporter](https://github.com/symmr/ppt-translation-supporter/)
 
 形式は [Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に準拠。
+
+## [1.3.1] - 2026-09-03
+
+### Changed
+
+- リポジトリ名を `ppt-translate-supporter` から `ppt-translation-supporter` に変更（タイトルの英語表記に合わせた）。GitHub Pages の URL も `https://symmr.github.io/ppt-translation-supporter/` に変更（旧URLからは自動的にリダイレクトされます）
 
 ## [1.3.0] - 2026-09-03
 

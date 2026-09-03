@@ -34,8 +34,8 @@ function show(el, text, className) {
 }
 
 function logError(context, err) {
-  console.error(`[ppt-translate-supporter] ${context}:`, err);
-  if (err && err.cause) console.error(`[ppt-translate-supporter] ${context} (cause):`, err.cause);
+  console.error(`[ppt-translation-supporter] ${context}:`, err);
+  if (err && err.cause) console.error(`[ppt-translation-supporter] ${context} (cause):`, err.cause);
 }
 
 function clearMessages() {
