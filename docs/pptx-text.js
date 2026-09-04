@@ -8,10 +8,24 @@ const NS_XML = "http://www.w3.org/XML/1998/namespace";
 const REL_SLIDE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide";
 const REL_NOTES_SLIDE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide";
 
+// Font presets and the "fonts already in this deck" scan follow PPT Finalizer,
+// so the two tools offer the same choices for the same deck.
+const PRESET_FONTS = [
+  "Noto Sans JP",
+  "Meiryo",
+  "Yu Gothic UI",
+  "Segoe UI",
+  "Arial",
+  "Calibri",
+];
+const TYPEFACE_CAPTURE_RE = /typeface="([^"]*)"/g;
+
 const UID_PATTERN = /(uid_[0-9]+)/;
 const TAG_RE = /\[(\d+)\]([\s\S]*?)\[\/\1\]/g;
 const TAG_RE_LEGACY = /⟦(\d+)⟧([\s\S]*?)⟦\/\1⟧/g;
 const STRIP_TAG_RE = /(?:\[\/?\d+\]|⟦\/?\d+⟧)/g;
+// same pattern without /g, so .test() does not carry lastIndex between calls
+const TAG_LIKE_RE = /(?:\[\/?\d+\]|⟦\/?\d+⟧)/;
 
 const TRANSLATION_PROMPT = `あなたはプロのローカライズ翻訳者です。以下のスライド抽出テキストを日本語に翻訳してください。
 
@@ -195,12 +209,25 @@ function setRunFont(run, typeface) {
   }
 }
 
+// Same roles PPT Finalizer treats as the title when unifying fonts.
+const TITLE_PH_TYPES = ["title", "ctrTitle", "subTitle"];
+
 function isTitleShape(shape) {
   if (!shape || !shape.getElementsByTagNameNS) return false;
   const phs = shape.getElementsByTagNameNS(NS_P, "ph");
   if (!phs || !phs.length) return false;
-  const type = phs[0].getAttribute("type") || "";
-  return type === "title" || type === "ctrTitle";
+  return TITLE_PH_TYPES.includes(phs[0].getAttribute("type") || "");
+}
+
+function collectTagMatches(text) {
+  const matches = [];
+  for (const re of [TAG_RE, TAG_RE_LEGACY]) {
+    re.lastIndex = 0;
+    let m;
+    while ((m = re.exec(text)) !== null) matches.push([m[1], m[2]]);
+    if (matches.length) break;
+  }
+  return matches;
 }
 
 function setParagraphText(paragraph, translatedText, options) {
@@ -209,57 +236,38 @@ function setParagraphText(paragraph, translatedText, options) {
   if (font) {
     for (const run of runs) setRunFont(run, font);
   }
-  const matches = [];
-  TAG_RE.lastIndex = 0;
-  let match = TAG_RE.exec(translatedText);
-  if (!match) {
-    TAG_RE_LEGACY.lastIndex = 0;
-    match = TAG_RE_LEGACY.exec(translatedText);
-    const re = match ? TAG_RE_LEGACY : null;
-    if (re) {
-      re.lastIndex = 0;
-      let m;
-      while ((m = re.exec(translatedText)) !== null) {
-        matches.push([m[1], m[2]]);
-      }
-    }
-  } else {
-    TAG_RE.lastIndex = 0;
-    let m;
-    while ((m = TAG_RE.exec(translatedText)) !== null) {
-      matches.push([m[1], m[2]]);
-    }
+  const text = String(translatedText);
+
+  // Tags are only emitted for paragraphs holding more than one run
+  // (runsToTaggedText). For a single-run paragraph any [0]...[/0] in the text
+  // is therefore literal content the deck actually contains, and parsing it as
+  // markup used to replace the paragraph with just the tag's inner text.
+  if (runs.length <= 1) {
+    if (runs.length) setRunText(runs[0], text);
+    return { mode: "plain", artifact: TAG_LIKE_RE.test(text) };
   }
 
+  const matches = collectTagMatches(text);
   const indices = matches.map(([i]) => Number(i));
-  const unique = new Set(indices);
+  // Every run must be accounted for exactly once. A partial set means the
+  // translation lost or renumbered tags, and honouring it would silently empty
+  // the runs it left out.
   if (
-    matches.length &&
-    runs.length &&
-    indices.every((i) => i >= 0 && i < runs.length) &&
-    unique.size === indices.length
+    matches.length === runs.length &&
+    new Set(indices).size === runs.length &&
+    indices.every((i) => i >= 0 && i < runs.length)
   ) {
-    const used = new Set();
-    for (const [idxStr, seg] of matches) {
-      const i = Number(idxStr);
-      setRunText(runs[i], seg);
-      used.add(i);
-    }
-    for (let i = 0; i < runs.length; i += 1) {
-      if (!used.has(i)) setRunText(runs[i], "");
-    }
+    for (const [idxStr, seg] of matches) setRunText(runs[Number(idxStr)], seg);
     return { mode: "runs" };
   }
 
-  // Fallback: the tags do not line up with the runs, so the paragraph is
-  // flattened into the first run. With more than one run that silently drops
-  // per-run formatting (colour, bold, ...), so the caller is told about it.
-  const plain = String(translatedText).replace(STRIP_TAG_RE, "");
-  if (runs.length) {
-    setRunText(runs[0], plain);
-    for (let i = 1; i < runs.length; i += 1) setRunText(runs[i], "");
-  }
-  return { mode: runs.length > 1 ? "flattened" : "plain" };
+  // The tags do not line up with the runs, so the paragraph is flattened into
+  // the first run. That drops per-run formatting (colour, bold, ...), so the
+  // caller is told about it rather than losing it quietly.
+  const plain = text.replace(STRIP_TAG_RE, "");
+  setRunText(runs[0], plain);
+  for (let i = 1; i < runs.length; i += 1) setRunText(runs[i], "");
+  return { mode: "flattened" };
 }
 
 function expandShapeNode(el) {
@@ -552,6 +560,7 @@ async function injectTextsToZip(zip, translations, metadata, options) {
   let injected = 0;
   let missing = 0;
   const flattened = [];
+  const tagArtifacts = [];
 
   for (const [path, locs] of byPath) {
     const entry = zip.file(path);
@@ -574,12 +583,44 @@ async function injectTextsToZip(zip, translations, metadata, options) {
       const font = isTitle ? titleFont : bodyFont;
       const outcome = setParagraphText(paragraph, translations[loc.id], { font });
       if (outcome && outcome.mode === "flattened") flattened.push(loc.id);
+      // written through as-is because the paragraph has no run tags, but the
+      // text still reads like markup — worth a look either way
+      if (outcome && outcome.artifact) tagArtifacts.push(loc.id);
       injected += 1;
     }
     zip.file(path, serializeXml(doc));
   }
 
-  return { injected, missing, flattened };
+  return { injected, missing, flattened, tagArtifacts };
+}
+
+function decodeXmlEntities(value) {
+  return value
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&");
+}
+
+// Fonts the deck already uses, most used first — the same listing PPT
+// Finalizer shows, so the picker can offer them alongside the presets.
+async function collectFontsFromZip(zip) {
+  const fonts = new Map();
+  for (const path of Object.keys(zip.files)) {
+    if (!path.endsWith(".xml") || zip.files[path].dir) continue;
+    const text = await zip.files[path].async("string");
+    TYPEFACE_CAPTURE_RE.lastIndex = 0;
+    let match;
+    while ((match = TYPEFACE_CAPTURE_RE.exec(text)) !== null) {
+      const name = decodeXmlEntities(match[1]).trim();
+      if (!name || name.startsWith("+")) continue; // +mj-lt / +mn-lt are theme refs
+      fonts.set(name, (fonts.get(name) || 0) + 1);
+    }
+  }
+  return [...fonts.entries()]
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "ja"));
 }
 
 function parseUidDelimitedText(source) {
@@ -639,6 +680,8 @@ function extractOutputName(originalName) {
 
 const api = {
   TRANSLATION_PROMPT,
+  PRESET_FONTS,
+  collectFontsFromZip,
   extractTextsFromZip,
   injectTextsToZip,
   parseUidDelimitedText,

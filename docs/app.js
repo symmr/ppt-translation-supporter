@@ -16,8 +16,15 @@ const errorMsg = document.getElementById("errorMsg");
 const warnMsg = document.getElementById("warnMsg");
 const okMsg = document.getElementById("okMsg");
 const busyMsg = document.getElementById("busyMsg");
-const titleFontInput = document.getElementById("titleFont");
-const bodyFontInput = document.getElementById("bodyFont");
+const titleFontSelect = document.getElementById("titleFontSelect");
+const bodyFontSelect = document.getElementById("bodyFontSelect");
+const titleCustomFont = document.getElementById("titleCustomFont");
+const bodyCustomFont = document.getElementById("bodyCustomFont");
+const titleFontPreview = document.getElementById("titleFontPreview");
+const bodyFontPreview = document.getElementById("bodyFontPreview");
+
+const KEEP_VALUE = "";
+const CUSTOM_VALUE = "__custom__";
 
 const PROMPT_STORAGE_KEY = "ppt-translation-supporter:prompt";
 
@@ -27,6 +34,7 @@ let sourceZip = null;
 let resultBlob = null;
 let resultName = "";
 let busy = false;
+let deckFonts = [];
 
 function show(el, text, className) {
   if (!text) {
@@ -61,12 +69,69 @@ function setStepState(el, state) {
 function setBusy(on, label) {
   busy = on;
   document.body.classList.toggle("is-busy", on);
-  for (const el of document.querySelectorAll("button, .opt input")) el.disabled = on;
+  for (const el of document.querySelectorAll("button, .opt input, .opt select")) el.disabled = on;
   show(busyMsg, on ? label || "処理中…" : "", "busy");
 }
 
 function setProgress(label) {
   if (busy) show(busyMsg, label, "busy");
+}
+
+function addOption(parent, value, label) {
+  const option = document.createElement("option");
+  option.value = value;
+  option.textContent = label;
+  parent.appendChild(option);
+}
+
+// Same grouping as PPT Finalizer's picker: presets, then whatever the deck
+// already uses, then free text. "指定しない" keeps the deck's fonts untouched
+// and stays the default, since this tool only rewrites translated runs.
+function populateFontSelect(selectEl, customInput, deckFonts) {
+  const previous = selectEl.value;
+  selectEl.innerHTML = "";
+  addOption(selectEl, KEEP_VALUE, "指定しない（元のまま）");
+
+  const presets = document.createElement("optgroup");
+  presets.label = "おすすめ";
+  for (const name of PRESET_FONTS) addOption(presets, name, name);
+  selectEl.appendChild(presets);
+
+  const presetSet = new Set(PRESET_FONTS);
+  const inDeck = deckFonts.filter(({ name }) => !presetSet.has(name));
+  if (inDeck.length) {
+    const group = document.createElement("optgroup");
+    group.label = "この PPTX 内";
+    for (const { name, count } of inDeck) addOption(group, name, `${name}（${count} 箇所）`);
+    selectEl.appendChild(group);
+  }
+
+  addOption(selectEl, CUSTOM_VALUE, "その他（自由入力）");
+
+  const known = new Set([KEEP_VALUE, CUSTOM_VALUE, ...PRESET_FONTS, ...inDeck.map((f) => f.name)]);
+  selectEl.value = known.has(previous) ? previous : KEEP_VALUE;
+  customInput.hidden = selectEl.value !== CUSTOM_VALUE;
+}
+
+function fontFromPicker(selectEl, customInput) {
+  if (selectEl.value === CUSTOM_VALUE) return customInput.value.trim();
+  return selectEl.value;
+}
+
+function updateFontPreview(selectEl, customInput, previewEl) {
+  const font = fontFromPicker(selectEl, customInput);
+  previewEl.style.fontFamily = font ? `"${font}", sans-serif` : "";
+  previewEl.hidden = !font;
+}
+
+function bindFontPicker(selectEl, customInput, previewEl) {
+  selectEl.addEventListener("change", () => {
+    customInput.hidden = selectEl.value !== CUSTOM_VALUE;
+    if (!customInput.hidden) customInput.focus();
+    updateFontPreview(selectEl, customInput, previewEl);
+  });
+  customInput.addEventListener("input", () => updateFontPreview(selectEl, customInput, previewEl));
+  updateFontPreview(selectEl, customInput, previewEl);
 }
 
 function defaultPrompt() {
@@ -153,6 +218,7 @@ async function handlePptx(file) {
     sourceZip = await JSZip.loadAsync(await file.arrayBuffer());
     setProgress("テキストを抽出中…");
     extracted = await extractTextsFromZip(sourceZip);
+    deckFonts = await collectFontsFromZip(sourceZip);
   } catch (err) {
     logError("PPTX の抽出", err);
     show(errorMsg, `抽出に失敗しました: ${err.message || err}`);
@@ -166,6 +232,10 @@ async function handlePptx(file) {
   extractMeta.textContent = `${extracted.slideCount} 枚 · ${extracted.uidCount} 件のテキスト`;
   promptBox.value = loadStoredPrompt() || defaultPrompt();
   extractBox.value = extracted.text;
+  populateFontSelect(titleFontSelect, titleCustomFont, deckFonts);
+  populateFontSelect(bodyFontSelect, bodyCustomFont, deckFonts);
+  updateFontPreview(titleFontSelect, titleCustomFont, titleFontPreview);
+  updateFontPreview(bodyFontSelect, bodyCustomFont, bodyFontPreview);
   setStepState(step1, "is-done");
   step2.hidden = false;
   setStepState(step2, "");
@@ -235,8 +305,8 @@ async function applyTranslation(source, sourceLabel) {
     const zip = await JSZip.loadAsync(await sourceFile.arrayBuffer());
     setProgress("訳文を書き戻し中…");
     const fonts = {
-      titleFont: titleFontInput.value.trim(),
-      bodyFont: bodyFontInput.value.trim(),
+      titleFont: fontFromPicker(titleFontSelect, titleCustomFont),
+      bodyFont: fontFromPicker(bodyFontSelect, bodyCustomFont),
     };
     const result = await injectTextsToZip(zip, translations, extracted.metadata, fonts);
     const blob = await zip.generateAsync(
@@ -266,6 +336,13 @@ async function applyTranslation(source, sourceLabel) {
         `${flattened.slice(0, 8).join(", ")}${flattened.length > 8 ? " …" : ""}`
       );
     }
+    const artifacts = result.tagArtifacts || [];
+    if (artifacts.length) {
+      notes.push(
+        `${artifacts.length} 件の訳文にタグ記法が残っています。そのまま書き戻したので、原文由来の表記ならそのままで問題ありません: ` +
+        `${artifacts.slice(0, 8).join(", ")}${artifacts.length > 8 ? " …" : ""}`
+      );
+    }
     if (notes.length) {
       show(warnMsg, `${notes.join("。")}。書き戻しは完了しました。ダウンロードが始まらない場合はボタンを押してください。`);
     } else {
@@ -293,8 +370,16 @@ function resetAll() {
   extractBox.value = "";
   promptBox.value = loadStoredPrompt() || defaultPrompt();
   document.getElementById("pasteBox").value = "";
-  titleFontInput.value = "";
-  bodyFontInput.value = "";
+  deckFonts = [];
+  for (const [sel, input, preview] of [
+    [titleFontSelect, titleCustomFont, titleFontPreview],
+    [bodyFontSelect, bodyCustomFont, bodyFontPreview],
+  ]) {
+    sel.value = KEEP_VALUE;
+    input.value = "";
+    input.hidden = true;
+    updateFontPreview(sel, input, preview);
+  }
   step2.hidden = true;
   step3.hidden = true;
   step4.hidden = true;
@@ -337,6 +422,9 @@ document.getElementById("downloadPptxBtn").addEventListener("click", () => {
   downloadBlob(resultBlob, resultName);
 });
 document.getElementById("resetBtn").addEventListener("click", resetAll);
+
+bindFontPicker(titleFontSelect, titleCustomFont, titleFontPreview);
+bindFontPicker(bodyFontSelect, bodyCustomFont, bodyFontPreview);
 
 promptBox.addEventListener("input", () => storePrompt(promptBox.value));
 document.getElementById("resetPromptBtn").addEventListener("click", () => {

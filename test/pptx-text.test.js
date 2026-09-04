@@ -266,6 +266,47 @@ test("applies the requested fonts to title and body runs only when asked", async
   assert.match(again.text, /uid_0002\n\[0\]赤\[\/0\]\[1\]青\[\/1\]/);
 });
 
+test("keeps literal [n]...[/n] in a single-run paragraph instead of eating it", async () => {
+  const zip = await buildZip();
+  const extracted = await extractTextsFromZip(zip);
+  // uid_0001 is a single-run paragraph, so extraction emitted no tags for it.
+  // Text that merely *looks* like tags is content and has to survive.
+  const literal = "タグ境界 [0]...[/0] は翻訳後も残ること。";
+  const ja = [
+    "uid_0001", literal,
+    "uid_0002", "[0]赤[/0][1]青[/1]",
+    "uid_0003", "エー1",
+    "uid_0004", "エー2",
+    "uid_0005", "スピーカーノート",
+  ].join("\n");
+
+  const result = await injectTextsToZip(zip, parseUidDelimitedText(ja), extracted.metadata);
+  assert.deepEqual(result.flattened, []);
+  assert.deepEqual(result.tagArtifacts, ["uid_0001"], "written as-is, but flagged for review");
+
+  const again = await extractTextsFromZip(zip);
+  assert.match(again.text, /uid_0001\nタグ境界 \[0\]\.\.\.\[\/0\] は翻訳後も残ること。/);
+});
+
+test("flattens rather than silently emptying runs a partial tag set left out", async () => {
+  const zip = await buildZip();
+  const extracted = await extractTextsFromZip(zip);
+  // uid_0002 has two runs but the translation only carries [0]
+  const ja = [
+    "uid_0001", "こんにちは世界",
+    "uid_0002", "[0]赤だけ[/0]",
+    "uid_0003", "エー1",
+    "uid_0004", "エー2",
+    "uid_0005", "スピーカーノート",
+  ].join("\n");
+
+  const result = await injectTextsToZip(zip, parseUidDelimitedText(ja), extracted.metadata);
+  assert.deepEqual(result.flattened, ["uid_0002"], "reported instead of quietly dropping run 1");
+
+  const again = await extractTextsFromZip(zip);
+  assert.match(again.text, /uid_0002\n\[0\]赤だけ\[\/0\]\[1\]\[\/1\]/);
+});
+
 test("parseUidDelimitedText ignores BOM and keeps blank body lines", () => {
   const parsed = parseUidDelimitedText(formatExtractFile(["uid_0001", "line1", "", "line3"]));
   assert.equal(parsed.uid_0001, "line1\n\nline3");
