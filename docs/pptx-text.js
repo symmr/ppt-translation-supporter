@@ -199,14 +199,18 @@ function setParagraphText(paragraph, translatedText) {
     for (let i = 0; i < runs.length; i += 1) {
       if (!used.has(i)) setRunText(runs[i], "");
     }
-    return;
+    return { mode: "runs" };
   }
 
+  // Fallback: the tags do not line up with the runs, so the paragraph is
+  // flattened into the first run. With more than one run that silently drops
+  // per-run formatting (colour, bold, ...), so the caller is told about it.
   const plain = String(translatedText).replace(STRIP_TAG_RE, "");
   if (runs.length) {
     setRunText(runs[0], plain);
     for (let i = 1; i < runs.length; i += 1) setRunText(runs[i], "");
   }
+  return { mode: runs.length > 1 ? "flattened" : "plain" };
 }
 
 function expandShapeNode(el) {
@@ -493,6 +497,7 @@ async function injectTextsToZip(zip, translations, metadata) {
 
   let injected = 0;
   let missing = 0;
+  const flattened = [];
 
   for (const [path, locs] of byPath) {
     const entry = zip.file(path);
@@ -511,13 +516,14 @@ async function injectTextsToZip(zip, translations, metadata) {
         missing += 1;
         continue;
       }
-      setParagraphText(paragraph, translations[loc.id]);
+      const outcome = setParagraphText(paragraph, translations[loc.id]);
+      if (outcome && outcome.mode === "flattened") flattened.push(loc.id);
       injected += 1;
     }
     zip.file(path, serializeXml(doc));
   }
 
-  return { injected, missing };
+  return { injected, missing, flattened };
 }
 
 function parseUidDelimitedText(source) {
