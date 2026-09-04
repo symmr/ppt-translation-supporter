@@ -12,6 +12,7 @@ const txtMeta = document.getElementById("txtMeta");
 const resultMeta = document.getElementById("resultMeta");
 const promptBox = document.getElementById("promptBox");
 const extractBox = document.getElementById("extractBox");
+const pasteBox = document.getElementById("pasteBox");
 const errorMsg = document.getElementById("errorMsg");
 const warnMsg = document.getElementById("warnMsg");
 const okMsg = document.getElementById("okMsg");
@@ -84,11 +85,10 @@ function addOption(parent, value, label) {
   parent.appendChild(option);
 }
 
-// Same grouping as PPT Finalizer's picker: presets, then whatever the deck
-// already uses, then free text. "指定しない" keeps the deck's fonts untouched
-// and stays the default, since this tool only rewrites translated runs.
-function populateFontSelect(selectEl, customInput, deckFonts) {
-  const previous = selectEl.value;
+// Same grouping and default as PPT Finalizer's picker: presets, then whatever
+// the deck already uses, then free text, starting on Noto Sans JP.
+// "指定しない" is the escape hatch that leaves the deck's fonts untouched.
+function populateFontSelect(selectEl, customInput, deckFonts, desired) {
   selectEl.innerHTML = "";
   addOption(selectEl, KEEP_VALUE, "指定しない（元のまま）");
 
@@ -109,8 +109,17 @@ function populateFontSelect(selectEl, customInput, deckFonts) {
   addOption(selectEl, CUSTOM_VALUE, "その他（自由入力）");
 
   const known = new Set([KEEP_VALUE, CUSTOM_VALUE, ...PRESET_FONTS, ...inDeck.map((f) => f.name)]);
-  selectEl.value = known.has(previous) ? previous : KEEP_VALUE;
+  selectEl.value = known.has(desired) ? desired : DEFAULT_FONT;
   customInput.hidden = selectEl.value !== CUSTOM_VALUE;
+}
+
+function resetFontPickers(deckFonts) {
+  titleCustomFont.value = "";
+  bodyCustomFont.value = "";
+  populateFontSelect(titleFontSelect, titleCustomFont, deckFonts, DEFAULT_FONT);
+  populateFontSelect(bodyFontSelect, bodyCustomFont, deckFonts, DEFAULT_FONT);
+  updateFontPreview(titleFontSelect, titleCustomFont, titleFontPreview);
+  updateFontPreview(bodyFontSelect, bodyCustomFont, bodyFontPreview);
 }
 
 function fontFromPicker(selectEl, customInput) {
@@ -210,9 +219,9 @@ async function handlePptx(file) {
     show(errorMsg, ".pptx を置いてください。");
     return;
   }
+  // a new deck means the previous one's extract, translation and result go
+  clearDeckState();
   sourceFile = file;
-  resultBlob = null;
-  resultName = "";
   try {
     setBusy(true, `${file.name} を読み込み中…`);
     sourceZip = await JSZip.loadAsync(await file.arrayBuffer());
@@ -232,10 +241,7 @@ async function handlePptx(file) {
   extractMeta.textContent = `${extracted.slideCount} 枚 · ${extracted.uidCount} 件のテキスト`;
   promptBox.value = loadStoredPrompt() || defaultPrompt();
   extractBox.value = extracted.text;
-  populateFontSelect(titleFontSelect, titleCustomFont, deckFonts);
-  populateFontSelect(bodyFontSelect, bodyCustomFont, deckFonts);
-  updateFontPreview(titleFontSelect, titleCustomFont, titleFontPreview);
-  updateFontPreview(bodyFontSelect, bodyCustomFont, bodyFontPreview);
+  resetFontPickers(deckFonts);
   setStepState(step1, "is-done");
   step2.hidden = false;
   setStepState(step2, "");
@@ -357,37 +363,41 @@ async function applyTranslation(source, sourceLabel) {
   }
 }
 
-function resetAll() {
-  sourceFile = null;
+// Everything tied to one deck and one translation. Dropping another PPTX runs
+// this too, so the previous deck's extract, pasted translation and result can
+// never be carried over onto the new file. The prompt is deliberately kept: it
+// is a saved setting, not per-file data.
+function clearDeckState() {
   extracted = null;
   sourceZip = null;
   resultBlob = null;
   resultName = "";
-  fileInput.value = "";
-  txtInput.value = "";
-  pptxMeta.hidden = true;
-  txtMeta.hidden = true;
-  extractBox.value = "";
-  promptBox.value = loadStoredPrompt() || defaultPrompt();
-  document.getElementById("pasteBox").value = "";
   deckFonts = [];
-  for (const [sel, input, preview] of [
-    [titleFontSelect, titleCustomFont, titleFontPreview],
-    [bodyFontSelect, bodyCustomFont, bodyFontPreview],
-  ]) {
-    sel.value = KEEP_VALUE;
-    input.value = "";
-    input.hidden = true;
-    updateFontPreview(sel, input, preview);
-  }
+  txtInput.value = "";
+  txtMeta.hidden = true;
+  txtMeta.textContent = "";
+  resultMeta.textContent = "";
+  extractMeta.textContent = "";
+  extractBox.value = "";
+  pasteBox.value = "";
+  resetFontPickers([]);
   step2.hidden = true;
   step3.hidden = true;
   step4.hidden = true;
-  setStepState(step1, "");
   setStepState(step2, "is-wait");
   setStepState(step3, "is-wait");
   setStepState(step4, "is-wait");
   clearMessages();
+}
+
+function resetAll() {
+  clearDeckState();
+  sourceFile = null;
+  fileInput.value = "";
+  pptxMeta.hidden = true;
+  pptxMeta.textContent = "";
+  promptBox.value = loadStoredPrompt() || defaultPrompt();
+  setStepState(step1, "");
 }
 
 bindDrop(pptxDrop, handlePptx, (file) => file.name.toLowerCase().endsWith(".pptx"));
@@ -403,7 +413,7 @@ txtInput.addEventListener("change", () => {
   if (file) handleTxt(file);
 });
 document.getElementById("applyPasteBtn").addEventListener("click", () => {
-  applyTranslation(document.getElementById("pasteBox").value, "貼り付け");
+  applyTranslation(pasteBox.value, "貼り付け");
 });
 
 document.getElementById("copyPromptBtn").addEventListener("click", () => {
@@ -423,6 +433,7 @@ document.getElementById("downloadPptxBtn").addEventListener("click", () => {
 });
 document.getElementById("resetBtn").addEventListener("click", resetAll);
 
+resetFontPickers([]);
 bindFontPicker(titleFontSelect, titleCustomFont, titleFontPreview);
 bindFontPicker(bodyFontSelect, bodyCustomFont, bodyFontPreview);
 
