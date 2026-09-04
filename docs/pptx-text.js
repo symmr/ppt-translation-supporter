@@ -10,6 +10,7 @@ const REL_NOTES_SLIDE = "http://schemas.openxmlformats.org/officeDocument/2006/r
 
 // Font presets and the "fonts already in this deck" scan follow PPT Finalizer,
 // so the two tools offer the same choices for the same deck.
+const DEFAULT_FONT = "Noto Sans JP";
 const PRESET_FONTS = [
   "Noto Sans JP",
   "Meiryo",
@@ -680,6 +681,7 @@ function extractOutputName(originalName) {
 
 const api = {
   TRANSLATION_PROMPT,
+  DEFAULT_FONT,
   PRESET_FONTS,
   collectFontsFromZip,
   extractTextsFromZip,
