@@ -16,6 +16,8 @@ const errorMsg = document.getElementById("errorMsg");
 const warnMsg = document.getElementById("warnMsg");
 const okMsg = document.getElementById("okMsg");
 const busyMsg = document.getElementById("busyMsg");
+const titleFontInput = document.getElementById("titleFont");
+const bodyFontInput = document.getElementById("bodyFont");
 
 const PROMPT_STORAGE_KEY = "ppt-translation-supporter:prompt";
 
@@ -59,7 +61,7 @@ function setStepState(el, state) {
 function setBusy(on, label) {
   busy = on;
   document.body.classList.toggle("is-busy", on);
-  for (const btn of document.querySelectorAll("button")) btn.disabled = on;
+  for (const el of document.querySelectorAll("button, .opt input")) el.disabled = on;
   show(busyMsg, on ? label || "処理中…" : "", "busy");
 }
 
@@ -232,7 +234,11 @@ async function applyTranslation(source, sourceLabel) {
     setBusy(true, "PPTX を読み込み中…");
     const zip = await JSZip.loadAsync(await sourceFile.arrayBuffer());
     setProgress("訳文を書き戻し中…");
-    const result = await injectTextsToZip(zip, translations, extracted.metadata);
+    const fonts = {
+      titleFont: titleFontInput.value.trim(),
+      bodyFont: bodyFontInput.value.trim(),
+    };
+    const result = await injectTextsToZip(zip, translations, extracted.metadata, fonts);
     const blob = await zip.generateAsync(
       {
         type: "blob",
@@ -287,6 +293,8 @@ function resetAll() {
   extractBox.value = "";
   promptBox.value = loadStoredPrompt() || defaultPrompt();
   document.getElementById("pasteBox").value = "";
+  titleFontInput.value = "";
+  bodyFontInput.value = "";
   step2.hidden = true;
   step3.hidden = true;
   step4.hidden = true;

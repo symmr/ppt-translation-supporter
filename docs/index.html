@@ -202,16 +202,36 @@
       color: var(--muted);
       font-size: 0.8rem;
       margin: 1.25rem 0 0;
+      text-align: center;
     }
     .app-version a { color: inherit; }
     .hint { color: var(--muted); font-size: 0.8rem; font-weight: normal; }
+    .opt-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      margin-bottom: 0.25rem;
+    }
+    .opt { flex: 1 1 14rem; }
+    .opt label { display: block; font-size: 0.9rem; margin-bottom: 0.2rem; }
+    .opt input {
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.45rem 0.6rem;
+      font: inherit;
+      font-size: 0.9rem;
+      background: var(--bg);
+      color: var(--text);
+    }
+    .opt input:disabled { opacity: 0.45; }
     #fileInput, #txtInput { display: none; }
   </style>
 </head>
 <body>
   <main>
     <h1>PPT Translation Supporter</h1>
-    <p class="lede">ブラウザ内で PowerPoint のテキストを抽出し、翻訳文を書き戻します。<strong>翻訳自体はこのツールでは行いません。</strong>抽出したプロンプトと本文を ChatGPT や Claude などの LLM に渡し、返ってきた訳文をこのツールで書き戻してください。ファイルはサーバに送られません。フォント統一は <a href="https://symmr.github.io/ppt-finalizer/" target="_blank" rel="noopener noreferrer">PPT Finalizer</a> で行います。</p>
+    <p class="lede">ブラウザ内で PowerPoint のテキストを抽出し、翻訳文を書き戻します。<strong>翻訳自体はこのツールでは行いません。</strong>抽出したプロンプトと本文を ChatGPT や Claude などの LLM に渡し、返ってきた訳文をこのツールで書き戻してください。ファイルはサーバに送られません。デッキ全体のフォント統一は <a href="https://symmr.github.io/ppt-finalizer/" target="_blank" rel="noopener noreferrer">PPT Finalizer</a> で行います。</p>
 
     <section class="step" id="step1">
       <div class="step-head">
@@ -251,7 +271,33 @@
         <span class="step-num">3</span>
         <h2>翻訳したテキストを渡す</h2>
       </div>
-      <div class="dropzone" id="txtDrop" tabindex="0" role="button">
+      <p class="meta">書き戻すときにフォントを指定できます。空欄なら元の PPTX のフォントを変更しません。指定した場合、訳文を書き戻した箇所にだけ適用されます（デッキ全体の統一は <a href="https://symmr.github.io/ppt-finalizer/" target="_blank" rel="noopener noreferrer">PPT Finalizer</a> で行います）。「タイトル」はタイトルプレースホルダーの図形が対象です。テキストボックスだけで作られたスライドにはタイトルの区別がないため、すべて本文として扱われます。</p>
+      <div class="opt-row">
+        <div class="opt">
+          <label for="titleFont">タイトルのフォント</label>
+          <input id="titleFont" type="text" list="fontList" placeholder="変更しない" autocomplete="off" spellcheck="false">
+        </div>
+        <div class="opt">
+          <label for="bodyFont">本文のフォント</label>
+          <input id="bodyFont" type="text" list="fontList" placeholder="変更しない" autocomplete="off" spellcheck="false">
+        </div>
+      </div>
+      <datalist id="fontList">
+        <option value="Meiryo UI"></option>
+        <option value="Meiryo"></option>
+        <option value="Yu Gothic UI"></option>
+        <option value="Yu Gothic"></option>
+        <option value="BIZ UDPGothic"></option>
+        <option value="MS PGothic"></option>
+        <option value="MS Gothic"></option>
+        <option value="Noto Sans JP"></option>
+        <option value="Hiragino Kaku Gothic ProN"></option>
+        <option value="Segoe UI"></option>
+        <option value="Arial"></option>
+        <option value="Calibri"></option>
+      </datalist>
+
+      <div class="dropzone" id="txtDrop" tabindex="0" role="button" style="margin-top:0.9rem;">
         <strong>ここに翻訳済み .txt をドロップ</strong>
         <p>またはクリックして選択</p>
       </div>

@@ -35,7 +35,7 @@ function slideXml() {
       <p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
       <p:grpSpPr/>
       <p:sp>
-        <p:nvSpPr><p:cNvPr id="2" name="Title 1"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>
+        <p:nvSpPr><p:cNvPr id="2" name="Title 1"/><p:cNvSpPr/><p:nvPr><p:ph type="title"/></p:nvPr></p:nvSpPr>
         <p:spPr/>
         <p:txBody>
           <a:bodyPr/><a:lstStyle/>
@@ -220,6 +220,50 @@ test("reports paragraphs whose formatting was lost to a tag mismatch", async () 
   // whatever formatting run 1 carried now applies to nothing
   const again = await extractTextsFromZip(zip);
   assert.match(again.text, /uid_0002\n\[0\]赤青\[\/0\]\[1\]\[\/1\]/);
+});
+
+test("applies the requested fonts to title and body runs only when asked", async () => {
+  const ja = [
+    "uid_0001", "こんにちは世界",
+    "uid_0002", "[0]赤[/0][1]青[/1]",
+    "uid_0003", "エー1",
+    "uid_0004", "エー2",
+    "uid_0005", "スピーカーノート",
+  ].join("\n");
+
+  // no options -> the file keeps whatever fonts it had
+  const untouched = await buildZip();
+  const meta0 = await extractTextsFromZip(untouched);
+  await injectTextsToZip(untouched, parseUidDelimitedText(ja), meta0.metadata);
+  const before = await untouched.file("ppt/slides/slide1.xml").async("string");
+  assert.doesNotMatch(before, /<a:latin/);
+
+  const zip = await buildZip();
+  const extracted = await extractTextsFromZip(zip);
+  await injectTextsToZip(zip, parseUidDelimitedText(ja), extracted.metadata, {
+    titleFont: "Meiryo UI",
+    bodyFont: "Yu Gothic",
+  });
+
+  const slide = await zip.file("ppt/slides/slide1.xml").async("string");
+
+  // uid_0001 sits in the title placeholder; the run carrying it takes titleFont
+  const titleRun = slide.slice(0, slide.indexOf("こんにちは世界"));
+  assert.match(titleRun, /<a:latin typeface="Meiryo UI"/);
+  assert.match(titleRun, /<a:ea typeface="Meiryo UI"/);
+  assert.match(titleRun, /<a:cs typeface="Meiryo UI"/);
+
+  // uid_0002 sits in a plain shape, so it takes bodyFont instead
+  const bodyRun = slide.slice(slide.indexOf("こんにちは世界"), slide.indexOf("青") + 10);
+  assert.match(bodyRun, /<a:latin typeface="Yu Gothic"/);
+  assert.doesNotMatch(bodyRun, /Meiryo UI/);
+  // and the title font never leaks into the body
+  assert.equal((slide.match(/Meiryo UI/g) || []).length, 3, "title font set on exactly one run");
+
+  // the round trip still reads back cleanly after the font attributes are added
+  const again = await extractTextsFromZip(zip);
+  assert.match(again.text, /uid_0001\nこんにちは世界/);
+  assert.match(again.text, /uid_0002\n\[0\]赤\[\/0\]\[1\]青\[\/1\]/);
 });
 
 test("parseUidDelimitedText ignores BOM and keeps blank body lines", () => {
