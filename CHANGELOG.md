@@ -5,6 +5,12 @@
 
 形式は [Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に準拠。
 
+## [1.0.1] - 2026-09-04
+
+### Added
+
+- Splunk RUM browser agent と Session Recorder（v3.1.0）
+
 ## [1.0.0] - 2026-09-04
 
 ### Added
