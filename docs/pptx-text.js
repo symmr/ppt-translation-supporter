@@ -1,5 +1,6 @@
 // PPTX text extract / inject. DOMParser in the browser, @xmldom/xmldom in Node.
-// No font replacement — that stays in PPT Finalizer.
+// Fonts are only set on the runs written back, and only when asked for.
+// Unifying fonts across a whole deck stays in PPT Finalizer.
 
 const NS_P = "http://schemas.openxmlformats.org/presentationml/2006/main";
 const NS_A = "http://schemas.openxmlformats.org/drawingml/2006/main";
@@ -158,8 +159,56 @@ function setRunText(run, text) {
   t.setAttributeNS(NS_XML, "xml:space", "preserve");
 }
 
-function setParagraphText(paragraph, translatedText) {
+// Inside <a:rPr> the schema fixes the child order, and PowerPoint asks to
+// repair a file whose order is wrong. latin/ea/cs go after the fill and
+// underline elements but before these.
+const RPR_AFTER_FONTS = ["sym", "hlinkClick", "hlinkMouseOver", "rtl", "extLst"];
+
+function ensureRPr(run) {
+  const existing = firstChildLocal(run, "rPr");
+  if (existing) return existing;
+  const rPr = run.ownerDocument.createElementNS(NS_A, "a:rPr");
+  // rPr must be the first child, ahead of <a:t>
+  run.insertBefore(rPr, run.firstChild);
+  return rPr;
+}
+
+function setRunFont(run, typeface) {
+  if (!typeface) return;
+  const rPr = ensureRPr(run);
+  const doc = rPr.ownerDocument;
+  let previous = null;
+  // latin covers ASCII, ea the Japanese glyphs, cs complex scripts
+  for (const name of ["latin", "ea", "cs"]) {
+    let el = firstChildLocal(rPr, name);
+    if (!el) {
+      el = doc.createElementNS(NS_A, `a:${name}`);
+      if (previous) {
+        rPr.insertBefore(el, previous.nextSibling);
+      } else {
+        const anchor = elementChildren(rPr).find((child) => RPR_AFTER_FONTS.includes(child.localName));
+        rPr.insertBefore(el, anchor || null);
+      }
+    }
+    el.setAttribute("typeface", typeface);
+    previous = el;
+  }
+}
+
+function isTitleShape(shape) {
+  if (!shape || !shape.getElementsByTagNameNS) return false;
+  const phs = shape.getElementsByTagNameNS(NS_P, "ph");
+  if (!phs || !phs.length) return false;
+  const type = phs[0].getAttribute("type") || "";
+  return type === "title" || type === "ctrTitle";
+}
+
+function setParagraphText(paragraph, translatedText, options) {
   const runs = runsOf(paragraph);
+  const font = (options && options.font) || "";
+  if (font) {
+    for (const run of runs) setRunFont(run, font);
+  }
   const matches = [];
   TAG_RE.lastIndex = 0;
   let match = TAG_RE.exec(translatedText);
@@ -486,7 +535,12 @@ function locateParagraph(doc, loc) {
   return paragraphsOf(directTxBody(shape))[loc.paraIdx] || null;
 }
 
-async function injectTextsToZip(zip, translations, metadata) {
+// options: { titleFont, bodyFont } — either may be empty to leave fonts alone.
+// Title placeholders take titleFont; every other shape, table cell and note
+// takes bodyFont.
+async function injectTextsToZip(zip, translations, metadata, options) {
+  const titleFont = (options && options.titleFont) || "";
+  const bodyFont = (options && options.bodyFont) || "";
   const byPath = new Map();
   for (const loc of metadata) {
     const path = loc.type === "notes" ? loc.notesPath : loc.slidePath;
@@ -516,7 +570,9 @@ async function injectTextsToZip(zip, translations, metadata) {
         missing += 1;
         continue;
       }
-      const outcome = setParagraphText(paragraph, translations[loc.id]);
+      const isTitle = loc.type === "shape" && isTitleShape(locateShape(doc, loc.shapePath || []));
+      const font = isTitle ? titleFont : bodyFont;
+      const outcome = setParagraphText(paragraph, translations[loc.id], { font });
       if (outcome && outcome.mode === "flattened") flattened.push(loc.id);
       injected += 1;
     }
