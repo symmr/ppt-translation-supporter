@@ -214,6 +214,7 @@
     }
     .opt { flex: 1 1 14rem; }
     .opt label { display: block; font-size: 0.9rem; margin-bottom: 0.2rem; }
+    .opt select,
     .opt input {
       width: 100%;
       border: 1px solid var(--border);
@@ -224,7 +225,20 @@
       background: var(--bg);
       color: var(--text);
     }
+    .opt input.custom-font { margin-top: 0.4rem; }
+    .opt select:disabled,
     .opt input:disabled { opacity: 0.45; }
+    .font-preview {
+      margin: 0.35rem 0 0;
+      padding: 0.35rem 0.5rem;
+      border: 1px dashed var(--border);
+      border-radius: 6px;
+      color: var(--muted);
+      font-size: 0.9rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
     #fileInput, #txtInput { display: none; }
   </style>
 </head>
@@ -271,31 +285,25 @@
         <span class="step-num">3</span>
         <h2>翻訳したテキストを渡す</h2>
       </div>
-      <p class="meta">書き戻すときにフォントを指定できます。空欄なら元の PPTX のフォントを変更しません。指定した場合、訳文を書き戻した箇所にだけ適用されます（デッキ全体の統一は <a href="https://symmr.github.io/ppt-finalizer/" target="_blank" rel="noopener noreferrer">PPT Finalizer</a> で行います）。「タイトル」はタイトルプレースホルダーの図形が対象です。テキストボックスだけで作られたスライドにはタイトルの区別がないため、すべて本文として扱われます。</p>
+      <p class="meta">書き戻すときにフォントを指定できます。「指定しない」なら元の PPTX のフォントを変更しません。指定した場合、訳文を書き戻した箇所にだけ適用されます（デッキ全体の統一は <a href="https://symmr.github.io/ppt-finalizer/" target="_blank" rel="noopener noreferrer">PPT Finalizer</a> で行います）。「タイトル」はタイトルプレースホルダー（title / ctrTitle / subTitle）の図形が対象です。テキストボックスだけで作られたスライドにはタイトルの区別がないため、すべて本文として扱われます。</p>
       <div class="opt-row">
         <div class="opt">
-          <label for="titleFont">タイトルのフォント</label>
-          <input id="titleFont" type="text" list="fontList" placeholder="変更しない" autocomplete="off" spellcheck="false">
+          <label for="titleFontSelect">タイトル</label>
+          <select id="titleFontSelect"></select>
+          <input id="titleCustomFont" type="text" class="custom-font" hidden
+            placeholder="フォント名を入力" autocomplete="off" spellcheck="false"
+            aria-label="タイトル用フォント名（自由入力）">
+          <p class="font-preview" id="titleFontPreview">見出し Sample あいう ABC 123</p>
         </div>
         <div class="opt">
-          <label for="bodyFont">本文のフォント</label>
-          <input id="bodyFont" type="text" list="fontList" placeholder="変更しない" autocomplete="off" spellcheck="false">
+          <label for="bodyFontSelect">本文</label>
+          <select id="bodyFontSelect"></select>
+          <input id="bodyCustomFont" type="text" class="custom-font" hidden
+            placeholder="フォント名を入力" autocomplete="off" spellcheck="false"
+            aria-label="本文用フォント名（自由入力）">
+          <p class="font-preview" id="bodyFontPreview">本文 Sample あいう ABC 123</p>
         </div>
       </div>
-      <datalist id="fontList">
-        <option value="Meiryo UI"></option>
-        <option value="Meiryo"></option>
-        <option value="Yu Gothic UI"></option>
-        <option value="Yu Gothic"></option>
-        <option value="BIZ UDPGothic"></option>
-        <option value="MS PGothic"></option>
-        <option value="MS Gothic"></option>
-        <option value="Noto Sans JP"></option>
-        <option value="Hiragino Kaku Gothic ProN"></option>
-        <option value="Segoe UI"></option>
-        <option value="Arial"></option>
-        <option value="Calibri"></option>
-      </datalist>
 
       <div class="dropzone" id="txtDrop" tabindex="0" role="button" style="margin-top:0.9rem;">
         <strong>ここに翻訳済み .txt をドロップ</strong>
