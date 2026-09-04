@@ -15,12 +15,16 @@ const extractBox = document.getElementById("extractBox");
 const errorMsg = document.getElementById("errorMsg");
 const warnMsg = document.getElementById("warnMsg");
 const okMsg = document.getElementById("okMsg");
+const busyMsg = document.getElementById("busyMsg");
+
+const PROMPT_STORAGE_KEY = "ppt-translation-supporter:prompt";
 
 let sourceFile = null;
 let extracted = null;
 let sourceZip = null;
 let resultBlob = null;
 let resultName = "";
+let busy = false;
 
 function show(el, text, className) {
   if (!text) {
@@ -47,6 +51,44 @@ function clearMessages() {
 function setStepState(el, state) {
   el.classList.remove("is-wait", "is-done");
   if (state) el.classList.add(state);
+}
+
+// Long PPTX reads and zip generation block for seconds on a real deck. Without
+// a visible busy state users click again, which used to start concurrent runs
+// and download the file several times over.
+function setBusy(on, label) {
+  busy = on;
+  document.body.classList.toggle("is-busy", on);
+  for (const btn of document.querySelectorAll("button")) btn.disabled = on;
+  show(busyMsg, on ? label || "処理中…" : "", "busy");
+}
+
+function setProgress(label) {
+  if (busy) show(busyMsg, label, "busy");
+}
+
+function defaultPrompt() {
+  return TRANSLATION_PROMPT.trim() + "\n";
+}
+
+function loadStoredPrompt() {
+  try {
+    return localStorage.getItem(PROMPT_STORAGE_KEY) || "";
+  } catch (_) {
+    return "";
+  }
+}
+
+function storePrompt(value) {
+  try {
+    if (value && value.trim() && value !== defaultPrompt()) {
+      localStorage.setItem(PROMPT_STORAGE_KEY, value);
+    } else {
+      localStorage.removeItem(PROMPT_STORAGE_KEY);
+    }
+  } catch (_) {
+    // a browser with storage blocked still works, the prompt just won't persist
+  }
 }
 
 function bindDrop(zone, onFile, acceptTest) {
@@ -95,6 +137,7 @@ function downloadBlob(blob, filename) {
 }
 
 async function handlePptx(file) {
+  if (busy) return;
   clearMessages();
   if (!file.name.toLowerCase().endsWith(".pptx")) {
     show(errorMsg, ".pptx を置いてください。");
@@ -102,19 +145,24 @@ async function handlePptx(file) {
   }
   sourceFile = file;
   resultBlob = null;
+  resultName = "";
   try {
+    setBusy(true, `${file.name} を読み込み中…`);
     sourceZip = await JSZip.loadAsync(await file.arrayBuffer());
+    setProgress("テキストを抽出中…");
     extracted = await extractTextsFromZip(sourceZip);
   } catch (err) {
     logError("PPTX の抽出", err);
     show(errorMsg, `抽出に失敗しました: ${err.message || err}`);
     return;
+  } finally {
+    setBusy(false);
   }
 
   pptxMeta.hidden = false;
   pptxMeta.textContent = `${file.name} · ${(file.size / 1024).toFixed(1)} KB`;
   extractMeta.textContent = `${extracted.slideCount} 枚 · ${extracted.uidCount} 件のテキスト`;
-  promptBox.value = TRANSLATION_PROMPT.trim() + "\n";
+  promptBox.value = loadStoredPrompt() || defaultPrompt();
   extractBox.value = extracted.text;
   setStepState(step1, "is-done");
   step2.hidden = false;
@@ -128,6 +176,7 @@ async function handlePptx(file) {
 }
 
 async function handleTxt(file) {
+  if (busy) return;
   let source;
   try {
     source = await file.text();
@@ -140,6 +189,7 @@ async function handleTxt(file) {
 }
 
 async function applyTranslation(source, sourceLabel) {
+  if (busy) return;
   clearMessages();
   if (!sourceZip || !extracted) {
     show(errorMsg, "先に PPTX を置いてください。");
@@ -170,23 +220,48 @@ async function applyTranslation(source, sourceLabel) {
     mismatchNote = `uid が一致しません。見つかった分だけ書き戻します。${bits.join(" / ")}`;
   }
 
+  // A new attempt invalidates the previous result, so a failure below can
+  // never leave the old file downloadable behind an error message.
+  resultBlob = null;
+  resultName = "";
+  resultMeta.textContent = "";
+  step4.hidden = true;
+  setStepState(step4, "is-wait");
+
   try {
+    setBusy(true, "PPTX を読み込み中…");
     const zip = await JSZip.loadAsync(await sourceFile.arrayBuffer());
+    setProgress("訳文を書き戻し中…");
     const result = await injectTextsToZip(zip, translations, extracted.metadata);
-    resultBlob = await zip.generateAsync({
-      type: "blob",
-      compression: "DEFLATE",
-      compressionOptions: { level: 6 },
-    });
+    const blob = await zip.generateAsync(
+      {
+        type: "blob",
+        compression: "DEFLATE",
+        compressionOptions: { level: 6 },
+      },
+      (meta) => setProgress(`PPTX を生成中… ${Math.round(meta.percent)}%`)
+    );
+    resultBlob = blob;
     resultName = translatedOutputName(sourceFile.name);
+    const flattened = result.flattened || [];
     resultMeta.textContent = `${resultName} · 書き戻し ${result.injected} 件` +
-      (result.missing ? ` · スキップ ${result.missing} 件` : "");
+      (result.missing ? ` · スキップ ${result.missing} 件` : "") +
+      (flattened.length ? ` · 書式維持できず ${flattened.length} 件` : "");
     step4.hidden = false;
     setStepState(step3, "is-done");
     setStepState(step4, "");
     downloadBlob(resultBlob, resultName);
-    if (mismatchNote) {
-      show(warnMsg, `${mismatchNote}。書き戻しは完了しました。ダウンロードが始まらない場合はボタンを押してください。`);
+
+    const notes = [];
+    if (mismatchNote) notes.push(mismatchNote);
+    if (flattened.length) {
+      notes.push(
+        `タグ（[0]...[/0]）が原文と一致しないため、${flattened.length} 件は段落内の書式（色分けなど）を維持できませんでした: ` +
+        `${flattened.slice(0, 8).join(", ")}${flattened.length > 8 ? " …" : ""}`
+      );
+    }
+    if (notes.length) {
+      show(warnMsg, `${notes.join("。")}。書き戻しは完了しました。ダウンロードが始まらない場合はボタンを押してください。`);
     } else {
       show(okMsg, "書き戻しました。ダウンロードが始まらない場合はボタンを押してください。");
     }
@@ -194,6 +269,8 @@ async function applyTranslation(source, sourceLabel) {
     logError("PPTX への書き戻し", err);
     if (mismatchNote) show(warnMsg, mismatchNote);
     show(errorMsg, `書き戻しに失敗しました: ${err.message || err}`);
+  } finally {
+    setBusy(false);
   }
 }
 
@@ -208,7 +285,7 @@ function resetAll() {
   pptxMeta.hidden = true;
   txtMeta.hidden = true;
   extractBox.value = "";
-  promptBox.value = "";
+  promptBox.value = loadStoredPrompt() || defaultPrompt();
   document.getElementById("pasteBox").value = "";
   step2.hidden = true;
   step3.hidden = true;
@@ -252,6 +329,13 @@ document.getElementById("downloadPptxBtn").addEventListener("click", () => {
   downloadBlob(resultBlob, resultName);
 });
 document.getElementById("resetBtn").addEventListener("click", resetAll);
+
+promptBox.addEventListener("input", () => storePrompt(promptBox.value));
+document.getElementById("resetPromptBtn").addEventListener("click", () => {
+  promptBox.value = defaultPrompt();
+  storePrompt(promptBox.value);
+  show(okMsg, "プロンプトを既定に戻しました。");
+});
 
 (async function showVersion() {
   try {

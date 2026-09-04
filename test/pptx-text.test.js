@@ -182,11 +182,44 @@ test("injects translations back onto the same runs", async () => {
   const result = await injectTextsToZip(zip, translations, extracted.metadata);
   assert.equal(result.injected, 5);
   assert.equal(result.missing, 0);
+  assert.deepEqual(result.flattened, []);
 
   const again = await extractTextsFromZip(zip);
   assert.match(again.text, /uid_0001\nこんにちは世界/);
   assert.match(again.text, /uid_0002\n\[0\]赤\[\/0\]\[1\]青\[\/1\]/);
   assert.match(again.text, /uid_0005\nスピーカーノート/);
+});
+
+test("reports paragraphs whose formatting was lost to a tag mismatch", async () => {
+  const zip = await buildZip();
+  const extracted = await extractTextsFromZip(zip);
+  // uid_0002 is a two-run paragraph; the translation drops its [n] tags, which
+  // is what an LLM commonly does. The text still lands, but both runs collapse
+  // into the first one, so the per-run formatting is gone.
+  const ja = [
+    "uid_0001",
+    "こんにちは世界",
+    "uid_0002",
+    "赤青",
+    "uid_0003",
+    "エー1",
+    "uid_0004",
+    "エー2",
+    "uid_0005",
+    "スピーカーノート",
+  ].join("\n");
+  const translations = parseUidDelimitedText(ja);
+  const report = validateTranslations(extracted.metadata, translations);
+  assert.equal(report.ok, true, "uid counts still line up, so uid validation stays silent");
+
+  const result = await injectTextsToZip(zip, translations, extracted.metadata);
+  assert.equal(result.injected, 5);
+  assert.deepEqual(result.flattened, ["uid_0002"]);
+
+  // the whole translation is crammed into run 0 and run 1 is left empty, so
+  // whatever formatting run 1 carried now applies to nothing
+  const again = await extractTextsFromZip(zip);
+  assert.match(again.text, /uid_0002\n\[0\]赤青\[\/0\]\[1\]\[\/1\]/);
 });
 
 test("parseUidDelimitedText ignores BOM and keeps blank body lines", () => {

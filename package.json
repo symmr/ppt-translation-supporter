@@ -1,7 +1,7 @@
 {
   "name": "ppt-translation-supporter",
   "private": true,
-  "version": "1.3.1",
+  "version": "1.4.0",
   "description": "Browser extract/inject for PowerPoint translation (PPT Translation Supporter)",
   "scripts": {
     "test": "node --test test/pptx-text.test.js"
