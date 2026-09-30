@@ -154,9 +154,15 @@ function paragraphPlainText(paragraph) {
   return text;
 }
 
+function paragraphHasBreak(paragraph) {
+  return elementChildren(paragraph).some((child) => child.localName === "br");
+}
+
 function runsToTaggedText(paragraph) {
   const runs = runsOf(paragraph);
-  if (runs.length <= 1) return paragraphPlainText(paragraph);
+  // A line break makes the paragraph one string. Tagging each run would split
+  // the uid body into markup the translator has to preserve.
+  if (runs.length <= 1 || paragraphHasBreak(paragraph)) return paragraphPlainText(paragraph);
   return runs.map((run, i) => `[${i}]${runText(run)}[/${i}]`).join("");
 }
 
@@ -231,6 +237,29 @@ function collectTagMatches(text) {
   return matches;
 }
 
+function rewriteBrokenLines(paragraph, text) {
+  const doc = paragraph.ownerDocument;
+  const sample = runsOf(paragraph)[0];
+  const rPr = sample && firstChildLocal(sample, "rPr");
+  for (const child of [...elementChildren(paragraph)]) {
+    if (child.localName === "r" || child.localName === "br") paragraph.removeChild(child);
+  }
+  String(text).split("\n").forEach((line, index) => {
+    if (index) {
+      const br = doc.createElementNS(NS_A, "a:br");
+      if (rPr) br.appendChild(rPr.cloneNode(true));
+      paragraph.appendChild(br);
+    }
+    const run = doc.createElementNS(NS_A, "a:r");
+    if (rPr) run.appendChild(rPr.cloneNode(true));
+    const node = doc.createElementNS(NS_A, "a:t");
+    node.setAttributeNS(NS_XML, "xml:space", "preserve");
+    node.textContent = line;
+    run.appendChild(node);
+    paragraph.appendChild(run);
+  });
+}
+
 function setParagraphText(paragraph, translatedText, options) {
   const runs = runsOf(paragraph);
   const font = (options && options.font) || "";
@@ -238,6 +267,14 @@ function setParagraphText(paragraph, translatedText, options) {
     for (const run of runs) setRunFont(run, font);
   }
   const text = String(translatedText);
+
+  if (paragraphHasBreak(paragraph)) {
+    rewriteBrokenLines(paragraph, text);
+    if (font) {
+      for (const run of runsOf(paragraph)) setRunFont(run, font);
+    }
+    return { mode: "plain", artifact: TAG_LIKE_RE.test(text) };
+  }
 
   // Tags are only emitted for paragraphs holding more than one run
   // (runsToTaggedText). For a single-run paragraph any [0]...[/0] in the text
@@ -873,11 +910,11 @@ function buildTextBox(doc, spec) {
   spPr.appendChild(ln);
 
   const txBody = el(doc, NS_P, "p:txBody");
-  const multi = spec.lines > 1 && spec.lineCy && spec.cy > spec.lineCy * 1.35;
+  const useLine = Boolean(spec.lineCy) && spec.cy > spec.lineCy * 1.35;
   const bodyPr = el(doc, NS_A, "a:bodyPr");
   bodyPr.setAttribute("wrap", "square");
-  bodyPr.setAttribute("anchor", multi ? "t" : "ctr");
-  bodyPr.setAttribute("fontAlgn", multi ? "t" : "ctr");
+  bodyPr.setAttribute("anchor", useLine ? "t" : "ctr");
+  bodyPr.setAttribute("fontAlgn", useLine ? "t" : "ctr");
   for (const name of ["lIns", "tIns", "rIns", "bIns"]) bodyPr.setAttribute(name, "0");
   bodyPr.appendChild(el(doc, NS_A, "a:noAutofit"));
   const p = el(doc, NS_A, "a:p");
@@ -893,9 +930,8 @@ function buildTextBox(doc, spec) {
   spcAft.appendChild(spcAftPts);
   pPr.appendChild(spcBef);
   pPr.appendChild(spcAft);
-  const r = el(doc, NS_A, "a:r");
   const rPr = el(doc, NS_A, "a:rPr");
-  const fontEmu = multi ? spec.lineCy : spec.cy;
+  const fontEmu = useLine ? spec.lineCy : spec.cy;
   const heightPt = (Math.max(1, fontEmu) / 914400) * 72;
   const pt = Math.max(1, heightPt * 0.92);
   rPr.setAttribute("lang", "ja-JP");
@@ -911,12 +947,21 @@ function buildTextBox(doc, spec) {
     face.setAttribute("typeface", DEFAULT_FONT);
     rPr.appendChild(face);
   }
-  const t = el(doc, NS_A, "a:t");
-  t.textContent = spec.text;
-  r.appendChild(rPr);
-  r.appendChild(t);
   p.appendChild(pPr);
-  p.appendChild(r);
+  String(spec.text).split("\n").forEach((line, index) => {
+    if (index) {
+      const br = el(doc, NS_A, "a:br");
+      br.appendChild(rPr.cloneNode(true));
+      p.appendChild(br);
+    }
+    const run = el(doc, NS_A, "a:r");
+    run.appendChild(rPr.cloneNode(true));
+    const t = el(doc, NS_A, "a:t");
+    t.setAttributeNS(NS_XML, "xml:space", "preserve");
+    t.textContent = line;
+    run.appendChild(t);
+    p.appendChild(run);
+  });
   txBody.appendChild(bodyPr);
   txBody.appendChild(el(doc, NS_A, "a:lstStyle"));
   txBody.appendChild(p);

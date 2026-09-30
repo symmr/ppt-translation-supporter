@@ -170,7 +170,8 @@ function sampleColors(state, seg) {
 }
 
 function currentSegments(state) {
-  return clusterWords(state.words, state.scale, profileFor(state.slider));
+  const auto = state.words ? clusterWords(state.words, state.scale, profileFor(state.slider)) : [];
+  return suppressOverlaps(auto, state.regions);
 }
 
 function editFor(state, seg) {
@@ -225,10 +226,11 @@ function renderCandidates() {
   const count = document.getElementById("ocrCount");
   const thresholds = document.getElementById("ocrThresholds");
   const slider = document.getElementById("imagePick");
-  if (!state || !state.words) {
+  if (!state || (!state.words && !(state.regions && state.regions.length))) {
     list.replaceChildren();
     count.textContent = "";
     thresholds.textContent = "";
+    paintOverlay();
     return;
   }
   state.priorEdits = [...state.edits.values()];
@@ -262,8 +264,8 @@ function renderCandidates() {
     crop.height = 44;
     drawCrop(crop, state.image, seg);
 
-    const field = document.createElement("input");
-    field.type = "text";
+    const field = document.createElement(seg.manualId ? "textarea" : "input");
+    if (!seg.manualId) field.type = "text";
     field.value = edit.text;
     field.setAttribute("aria-label", `原文 ${index + 1}`);
     field.addEventListener("input", () => {
@@ -274,12 +276,21 @@ function renderCandidates() {
 
     const conf = document.createElement("span");
     conf.className = "conf";
-    conf.textContent = `${Math.round(seg.confidence)}%`;
+    if (seg.manualId) {
+      const drop = document.createElement("button");
+      drop.type = "button";
+      drop.textContent = "消す";
+      drop.addEventListener("click", () => removeRegion(seg.manualId));
+      conf.append(drop);
+    } else {
+      conf.textContent = `${Math.round(seg.confidence)}%`;
+    }
     row.append(label, crop, field, conf);
     list.append(row);
   });
   count.textContent = countLine(state);
   markCards();
+  paintOverlay();
 }
 
 function markCards() {
@@ -355,7 +366,7 @@ async function selectPicture(pic) {
   openKey = pic.key;
   let state = states.get(pic.key);
   if (!state) {
-    state = { slider: 0, edits: new Map(), words: null, scale: 1, image: null, seedChecks: true };
+    state = { slider: 0, edits: new Map(), words: null, scale: 1, image: null, seedChecks: true, regions: [] };
     states.set(pic.key, state);
   }
   const index = pictures.findIndex((item) => item.key === pic.key);
@@ -370,7 +381,7 @@ async function selectPicture(pic) {
   setOcrNote("");
   document.getElementById("imagePick").value = String(state.slider);
   syncOcrNav();
-  if (state.words && state.image) {
+  if ((state.words && state.image) || (state.regions || []).length) {
     setOcrStatus("");
     showOcrReady(true);
     renderCandidates();
@@ -522,8 +533,9 @@ function syncOcrNav() {
 function showOcrReady(ready) {
   const panel = document.getElementById("ocrPanel");
   const start = document.getElementById("startOcrBtn");
+  const state = states.get(openKey);
   if (panel) panel.hidden = !ready;
-  if (start) start.hidden = ready;
+  if (start) start.hidden = Boolean(ready && state && state.words);
 }
 
 async function thumbUrl(pic) {
@@ -571,7 +583,7 @@ async function changeImagePage(delta) {
 
 function excludeAll() {
   const state = states.get(openKey);
-  if (!state || !state.words) return;
+  if (!state || (!state.words && !(state.regions || []).length)) return;
   state.seedChecks = false;
   for (const seg of currentSegments(state)) {
     const edit = editFor(state, seg);
@@ -601,8 +613,8 @@ async function applyBoxes() {
   if (!hooks || hooks.isBusy()) return;
   const pic = pictures.find((item) => item.key === openKey);
   const state = pic && states.get(pic.key);
-  if (!pic || !state || !state.words || !state.image) {
-    setOcrNote("載せる行がありません。抽出開始を押して、抽出する行にチェックを入れてください。", "error");
+  if (!pic || !state || !state.image) {
+    setOcrNote("載せる行がありません。抽出する行にチェックを入れてください。", "error");
     return;
   }
   const boxes = boxesFor(pic, state);
@@ -643,6 +655,226 @@ async function applyBoxes() {
   }
 }
 
+let regionDrag = null;
+
+function imageFrame(img) {
+  const nw = img.naturalWidth;
+  const nh = img.naturalHeight;
+  if (!nw || !nh) return null;
+  const rect = img.getBoundingClientRect();
+  const scale = Math.min(rect.width / nw, rect.height / nh);
+  return {
+    scale,
+    offsetX: (rect.width - nw * scale) / 2,
+    offsetY: (rect.height - nh * scale) / 2,
+    width: rect.width,
+    height: rect.height,
+  };
+}
+
+function eventToImagePx(event, img) {
+  const frame = imageFrame(img);
+  if (!frame) return null;
+  const rect = img.getBoundingClientRect();
+  const x = (event.clientX - rect.left - frame.offsetX) / frame.scale;
+  const y = (event.clientY - rect.top - frame.offsetY) / frame.scale;
+  return {
+    x: Math.max(0, Math.min(img.naturalWidth, x)),
+    y: Math.max(0, Math.min(img.naturalHeight, y)),
+  };
+}
+
+function normalizeRect(a, b) {
+  if (!a || !b) return null;
+  const x0 = Math.min(a.x, b.x);
+  const y0 = Math.min(a.y, b.y);
+  const x1 = Math.max(a.x, b.x);
+  const y1 = Math.max(a.y, b.y);
+  if (x1 - x0 < 8 || y1 - y0 < 8) return null;
+  return { x0, y0, x1, y1 };
+}
+
+function paintOverlay() {
+  const img = document.getElementById("ocrSource");
+  const canvas = document.getElementById("ocrOverlay");
+  if (!img || !canvas) return;
+  const frame = imageFrame(img);
+  if (!frame) return;
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.max(1, Math.round(frame.width * dpr));
+  canvas.height = Math.max(1, Math.round(frame.height * dpr));
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, frame.width, frame.height);
+  const state = states.get(openKey);
+  const rects = state && state.regions ? state.regions.slice() : [];
+  if (regionDrag) {
+    const live = normalizeRect(regionDrag.start, regionDrag.current);
+    if (live) rects.push(live);
+  }
+  for (const rect of rects) {
+    const x = frame.offsetX + rect.x0 * frame.scale;
+    const y = frame.offsetY + rect.y0 * frame.scale;
+    const w = (rect.x1 - rect.x0) * frame.scale;
+    const h = (rect.y1 - rect.y0) * frame.scale;
+    ctx.fillStyle = "rgba(37, 99, 235, 0.18)";
+    ctx.strokeStyle = "#2563eb";
+    ctx.lineWidth = 2;
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeRect(x, y, w, h);
+  }
+}
+
+function removeRegion(id) {
+  const state = states.get(openKey);
+  if (!state || !state.regions) return;
+  state.regions = state.regions.filter((region) => region.manualId !== id);
+  state.edits.delete(`region:${id}`);
+  renderCandidates();
+}
+
+async function ocrRegion(rect) {
+  if (!hooks || hooks.isBusy()) return;
+  const pic = pictures.find((item) => item.key === openKey);
+  const state = pic && states.get(pic.key);
+  if (!pic || !state) return;
+  const token = ocrToken;
+  let outcome = "error";
+  try {
+    hooks.setBusy(true, "範囲を読み取り中…");
+    setOcrNote("範囲を読み取り中…", "busy");
+    setOcrStatus("範囲を読み取り中…");
+    if (!state.image) {
+      state.image = await loadImage(pic);
+      showSource(pic, state);
+    }
+    if (token !== ocrToken) {
+      outcome = "cancel";
+      return;
+    }
+    const w = Math.round(rect.x1 - rect.x0);
+    const h = Math.round(rect.y1 - rect.y0);
+    const scale = Math.max(1, Math.min(2, 4000 / Math.max(w, h)));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(w * scale);
+    canvas.height = Math.round(h * scale);
+    canvas.getContext("2d").drawImage(
+      state.image,
+      rect.x0,
+      rect.y0,
+      w,
+      h,
+      0,
+      0,
+      canvas.width,
+      canvas.height
+    );
+    const worker = await getWorker();
+    if (token !== ocrToken) {
+      outcome = "cancel";
+      return;
+    }
+    await worker.setParameters({ tessedit_pageseg_mode: "6" });
+    let data;
+    try {
+      ({ data } = await worker.recognize(canvas));
+    } finally {
+      await worker.setParameters({ tessedit_pageseg_mode: "11" }).catch(() => {});
+    }
+    if (token !== ocrToken) {
+      outcome = "cancel";
+      return;
+    }
+    const words = wordsFromResult(data);
+    const ocrScale = resolveOcrScale(words, w, h, scale);
+    const built = textFromRegionWords(words, ocrScale);
+    if (!built.text.trim()) {
+      setOcrNote("範囲内から文字を読めませんでした。", "error");
+      outcome = "empty";
+      return;
+    }
+    const region = {
+      manualId: `r${Date.now().toString(36)}`,
+      text: built.text,
+      confidence: built.confidence,
+      x0: rect.x0,
+      y0: rect.y0,
+      x1: rect.x1,
+      y1: rect.y1,
+      lineH: built.lineH || h / Math.max(1, built.lines),
+      lines: built.lines,
+      align: "l",
+    };
+    state.regions = (state.regions || []).filter((item) => overlapRatio(item, region) < 0.5);
+    state.regions.push(region);
+    state.edits.set(segmentKey(region), {
+      text: region.text,
+      checked: true,
+      edited: false,
+      x0: region.x0,
+      y0: region.y0,
+      x1: region.x1,
+      y1: region.y1,
+    });
+    setOcrStatus("");
+    showOcrReady(true);
+    renderCandidates();
+    outcome = "ok";
+    setOcrNote("範囲を1件にしました。重なっていた行は置き換えています。");
+  } catch (err) {
+    if (token !== ocrToken) {
+      outcome = "cancel";
+      return;
+    }
+    console.error("[ppt-translation-supporter] 範囲 OCR:", err);
+    setOcrNote(`範囲の読み取りに失敗しました: ${err.message || err}`, "error");
+  } finally {
+    if (token !== ocrToken) return;
+    hooks.setBusy(false);
+    syncImagePager();
+    if (outcome === "cancel") {
+      setOcrStatus("");
+      setOcrNote("読み込みを停止しました。");
+    }
+    paintOverlay();
+  }
+}
+
+function bindRegionDraw() {
+  const canvas = document.getElementById("ocrOverlay");
+  const img = document.getElementById("ocrSource");
+  if (!canvas || canvas.dataset.bound) return;
+  canvas.dataset.bound = "1";
+  img.addEventListener("load", paintOverlay);
+  window.addEventListener("resize", paintOverlay);
+  canvas.addEventListener("pointerdown", (event) => {
+    if (!hooks || hooks.isBusy()) return;
+    if (!img.naturalWidth) return;
+    const start = eventToImagePx(event, img);
+    if (!start) return;
+    regionDrag = { start, current: start, pointerId: event.pointerId };
+    canvas.setPointerCapture(event.pointerId);
+    paintOverlay();
+  });
+  canvas.addEventListener("pointermove", (event) => {
+    if (!regionDrag || event.pointerId !== regionDrag.pointerId) return;
+    regionDrag.current = eventToImagePx(event, img);
+    paintOverlay();
+  });
+  const finish = (event) => {
+    if (!regionDrag || event.pointerId !== regionDrag.pointerId) return;
+    const rect = normalizeRect(regionDrag.start, regionDrag.current);
+    regionDrag = null;
+    paintOverlay();
+    if (rect) ocrRegion(rect);
+  };
+  canvas.addEventListener("pointerup", finish);
+  canvas.addEventListener("pointercancel", () => {
+    regionDrag = null;
+    paintOverlay();
+  });
+}
+
 document.getElementById("openImageBtn").addEventListener("click", openPanel);
 document.getElementById("imagePrev").addEventListener("click", () => changeImagePage(-1));
 document.getElementById("imageNext").addEventListener("click", () => changeImagePage(1));
@@ -656,6 +888,7 @@ document.getElementById("closeOcrBtn").addEventListener("click", closeOcrDialog)
 document.getElementById("ocrDialog").addEventListener("click", (event) => {
   if (event.target === event.currentTarget) closeOcrDialog();
 });
+bindRegionDraw();
 document.getElementById("imagePick").addEventListener("input", () => {
   const state = states.get(openKey);
   if (!state) return;

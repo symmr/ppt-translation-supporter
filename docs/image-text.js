@@ -56,7 +56,7 @@ function iou(a, b) {
   return inter / Math.max(1, areaA + areaB - inter);
 }
 
-function clusterWords(words, scale, profile) {
+function clusterWords(words, scale, profile, options) {
   const kept = [];
   (words || []).forEach((word) => {
     const text = String(word.text || "").trim();
@@ -115,6 +115,7 @@ function clusterWords(words, scale, profile) {
     if (deduped.some((prev) => iou(seg, prev) > 0.55)) return;
     deduped.push(seg);
   });
+  if (options && options.wrap === false) return deduped;
   return groupWrappedLines(deduped);
 }
 
@@ -200,7 +201,30 @@ function groupWrappedLines(segments) {
   });
 }
 
+function suppressOverlaps(segments, regions) {
+  const extra = regions || [];
+  if (!extra.length) return segments || [];
+  const kept = (segments || []).filter((seg) => !extra.some((region) => overlapRatio(seg, region) >= 0.5));
+  return kept.concat(extra);
+}
+
+// A dragged rectangle is one block even when the lines inside differ in size.
+function textFromRegionWords(words, scale) {
+  const lines = clusterWords(words, scale, profileFromSlider(0), { wrap: false });
+  const heights = lines.map((line) => line.y1 - line.y0).filter((height) => height > 0);
+  const confidence = lines.length
+    ? lines.reduce((sum, line) => sum + line.confidence, 0) / lines.length
+    : 0;
+  return {
+    text: lines.map((line) => line.text).filter(Boolean).join("\n"),
+    lineH: heights.length ? median(heights) : 0,
+    lines: Math.max(1, lines.length),
+    confidence,
+  };
+}
+
 function segmentKey(seg) {
+  if (seg.manualId) return `region:${seg.manualId}`;
   const round = (value) => Math.round(value / 4) * 4;
   return [round(seg.x0), round(seg.y0), round(seg.x1), round(seg.y1)].join(",");
 }
@@ -290,6 +314,9 @@ function segmentToEmu(pic, imageSize, seg, pad) {
 const imageTextApi = {
   profileFromSlider,
   clusterWords,
+  suppressOverlaps,
+  textFromRegionWords,
+  overlapRatio,
   segmentKey,
   segmentToEmu,
   inheritEdit,

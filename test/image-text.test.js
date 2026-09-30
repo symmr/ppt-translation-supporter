@@ -12,7 +12,7 @@ const {
   addPictureTextBoxes,
   replacePictureTextBoxes,
 } = require("../docs/pptx-text.js");
-const { clusterWords, profileFromSlider, segmentToEmu, inheritEdit, resolveOcrScale } = require("../docs/image-text.js");
+const { clusterWords, profileFromSlider, segmentToEmu, inheritEdit, resolveOcrScale, suppressOverlaps, textFromRegionWords } = require("../docs/image-text.js");
 
 const P = "http://schemas.openxmlformats.org/presentationml/2006/main";
 const A = "http://schemas.openxmlformats.org/drawingml/2006/main";
@@ -261,6 +261,41 @@ test("a wrapped block uses the line height and can be centered", async () => {
   assert.match(xml, /anchor="t"/);
   assert.match(xml, /algn="ctr"/);
   assert.match(xml, /sz="6624"/);
+});
+
+test("a dragged region stays one block and replaces what it covers", () => {
+  const words = [
+    { text: "AI", confidence: 90, bbox: { x0: 0, y0: 0, x1: 40, y1: 20 } },
+    { text: "observability", confidence: 90, bbox: { x0: 48, y0: 0, x1: 180, y1: 20 } },
+    { text: "challenge", confidence: 90, bbox: { x0: 10, y0: 28, x1: 120, y1: 48 } },
+  ];
+  const built = textFromRegionWords(words, 1);
+  assert.equal(built.text, "AI observability\nchallenge");
+  assert.equal(built.lines, 2);
+  const region = { x0: 0, y0: 0, x1: 200, y1: 60, text: built.text, manualId: "r1" };
+  const merged = suppressOverlaps(clusterWords(words, 1, profileFromSlider(0)), [region]);
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].manualId, "r1");
+});
+
+test("a region keeps its line breaks as one extract entry", async () => {
+  const zip = await buildZip();
+  await addPictureTextBoxes(zip, [{
+    slidePath: "ppt/slides/slide1.xml",
+    x: 100,
+    y: 200,
+    cx: 400,
+    cy: 200,
+    text: "AI observability has a\ncredibility challenge",
+    fill: "111111",
+    ink: "FFFFFF",
+  }]);
+  const xml = await zip.file("ppt/slides/slide1.xml").async("string");
+  assert.match(xml, /<a:br\b/);
+  const extracted = await extractTextsFromZip(zip);
+  assert.match(extracted.text, /AI observability has a\ncredibility challenge/);
+  const added = extracted.metadata.filter((item) => item.type === "shape" && item.slidePath === "ppt/slides/slide1.xml");
+  assert.equal(added.length, 2);
 });
 
 test("slider movement does not check rows the user excluded", () => {
