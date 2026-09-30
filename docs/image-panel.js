@@ -528,6 +528,7 @@ function syncOcrNav() {
   const next = document.getElementById("ocrNext");
   if (prev) prev.disabled = index <= 0;
   if (next) next.disabled = index < 0 || index >= pictures.length - 1;
+  syncZoomButtons();
 }
 
 function showOcrReady(ready) {
@@ -656,6 +657,26 @@ async function applyBoxes() {
 }
 
 let regionDrag = null;
+const ZOOM_STEPS = [0.5, 0.75, 1, 1.5, 2, 3];
+let zoomStep = 2;
+
+function applyZoom(next) {
+  zoomStep = Math.max(0, Math.min(ZOOM_STEPS.length - 1, next));
+  const frame = document.getElementById("ocrFrame");
+  if (frame) frame.style.width = `${ZOOM_STEPS[zoomStep] * 100}%`;
+  const label = document.getElementById("ocrZoomLabel");
+  if (label) label.textContent = `${Math.round(ZOOM_STEPS[zoomStep] * 100)}%`;
+  syncZoomButtons();
+  requestAnimationFrame(paintOverlay);
+}
+
+function syncZoomButtons() {
+  const shrink = document.getElementById("ocrZoomOut");
+  const grow = document.getElementById("ocrZoomIn");
+  const busy = Boolean(hooks && hooks.isBusy());
+  if (shrink) shrink.disabled = busy || zoomStep <= 0;
+  if (grow) grow.disabled = busy || zoomStep >= ZOOM_STEPS.length - 1;
+}
 
 function imageFrame(img) {
   const nw = img.naturalWidth;
@@ -847,6 +868,8 @@ function bindRegionDraw() {
   canvas.dataset.bound = "1";
   img.addEventListener("load", paintOverlay);
   window.addEventListener("resize", paintOverlay);
+  if (window.ResizeObserver) new ResizeObserver(() => paintOverlay()).observe(document.getElementById("ocrFrame"));
+  applyZoom(zoomStep);
   canvas.addEventListener("pointerdown", (event) => {
     if (!hooks || hooks.isBusy()) return;
     if (!img.naturalWidth) return;
@@ -889,6 +912,8 @@ document.getElementById("ocrDialog").addEventListener("click", (event) => {
   if (event.target === event.currentTarget) closeOcrDialog();
 });
 bindRegionDraw();
+document.getElementById("ocrZoomOut").addEventListener("click", () => applyZoom(zoomStep - 1));
+document.getElementById("ocrZoomIn").addEventListener("click", () => applyZoom(zoomStep + 1));
 document.getElementById("imagePick").addEventListener("input", () => {
   const state = states.get(openKey);
   if (!state) return;

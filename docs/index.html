@@ -305,7 +305,7 @@
     body.is-busy #ocrDialog { pointer-events: none; }
     body.is-busy #stopOcrBtn { pointer-events: auto; }
     #ocrDialog {
-      width: min(880px, calc(100vw - 2rem));
+      width: min(1040px, calc(100vw - 2rem));
       max-width: calc(100vw - 2rem);
       max-height: min(86vh, 900px);
       margin: auto;
@@ -331,18 +331,30 @@
       margin-bottom: 0.35rem;
     }
     .ocr-head h3 { margin: 0; font-size: 1rem; font-weight: 600; }
+    .ocr-stage { min-width: 0; }
+    .ocr-zoombar {
+      display: flex;
+      align-items: center;
+      gap: 0.45rem;
+      margin-bottom: 0.4rem;
+    }
+    .ocr-zoombar .meta { margin: 0; min-width: 3.2rem; }
+    .ocr-viewport {
+      max-height: min(58vh, 640px);
+      overflow: auto;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
     .ocr-frame {
       position: relative;
-      min-width: 0;
+      width: 100%;
     }
     .ocr-source {
       display: block;
       width: 100%;
-      max-height: 280px;
-      object-fit: contain;
+      height: auto;
       background: var(--bg);
-      border: 1px solid var(--border);
-      border-radius: 8px;
     }
     #ocrOverlay {
       position: absolute;
@@ -434,13 +446,22 @@
           </div>
           <div class="ocr-nav">
             <button type="button" id="ocrPrev" aria-label="前の画像">◀</button>
-            <div class="ocr-frame" id="ocrFrame">
-              <img id="ocrSource" class="ocr-source" alt="">
-              <canvas id="ocrOverlay"></canvas>
+            <div class="ocr-stage">
+              <div class="ocr-zoombar">
+                <button type="button" id="ocrZoomOut">縮小</button>
+                <span class="meta" id="ocrZoomLabel">100%</span>
+                <button type="button" id="ocrZoomIn">拡大</button>
+              </div>
+              <div class="ocr-viewport" id="ocrViewport">
+                <div class="ocr-frame" id="ocrFrame">
+                  <img id="ocrSource" class="ocr-source" alt="">
+                  <canvas id="ocrOverlay"></canvas>
+                </div>
+              </div>
             </div>
             <button type="button" id="ocrNext" aria-label="次の画像">▶</button>
           </div>
-          <p class="ocr-callout" id="ocrHint">画像上をドラッグすると、囲んだ範囲だけを1件として読みます。</p>
+          <p class="ocr-callout" id="ocrHint">拡大してから、画像上をドラッグすると、囲んだ範囲だけを1件として読みます。</p>
           <p class="meta">確認終わればページ下部の完了ボタンをクリックしてください</p>
           <div class="ocr-status-row" id="ocrStatusRow" hidden>
             <p class="meta" id="ocrStatus"></p>
