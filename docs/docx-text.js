@@ -6,13 +6,11 @@
 
 const NS_W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 const NS_A = "http://schemas.openxmlformats.org/drawingml/2006/main";
-const NS_WP = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing";
 const NS_PIC = "http://schemas.openxmlformats.org/drawingml/2006/picture";
 const NS_WPS = "http://schemas.microsoft.com/office/word/2010/wordprocessingShape";
 const NS_WPG = "http://schemas.microsoft.com/office/word/2010/wordprocessingGroup";
 const NS_R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 const NS_XML = "http://www.w3.org/XML/1998/namespace";
-const NS_PKG = "http://schemas.openxmlformats.org/package/2006/relationships";
 const REL_IMAGE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
 const GROUP_URI = "http://schemas.microsoft.com/office/word/2010/wordprocessingGroup";
 const PART = "word/document.xml";

@@ -54,13 +54,6 @@ function boxPrefix(pic) {
   return `imgtext-${pic.slideIndex}-${occurrence}-`;
 }
 
-const PICK_PROFILES = [0, 50, 100];
-
-function profileFor(step) {
-  const index = Math.min(PICK_PROFILES.length - 1, Math.max(0, Math.round(Number(step) || 0)));
-  return profileFromSlider(PICK_PROFILES[index]);
-}
-
 function setOcrStatus(text) {
   const row = document.getElementById("ocrStatusRow");
   const el = document.getElementById("ocrStatus");
@@ -174,17 +167,20 @@ function sampleColors(state, seg) {
 }
 
 function currentSegments(state) {
-  const auto = state.words ? clusterWords(state.words, state.scale, profileFor(state.slider)) : [];
+  let auto = state.words ? clusterWords(state.words, state.scale, profileFromSlider(0)) : [];
+  const dropped = state.dismissed || [];
+  if (dropped.length) {
+    auto = auto.filter((seg) => !dropped.some((rect) => overlapRatio(seg, rect) >= 0.5));
+  }
   return suppressOverlaps(auto, state.regions);
 }
 
 function editFor(state, seg) {
   const key = segmentKey(seg);
   if (state.edits.has(key)) return state.edits.get(key);
-  const inherited = inheritEdit(state.priorEdits, seg, state.seedChecks !== false);
+  const inherited = inheritEdit(state.priorEdits, seg);
   const record = {
     text: inherited.text,
-    checked: inherited.checked,
     edited: inherited.edited,
     x0: seg.x0,
     y0: seg.y0,
@@ -197,16 +193,9 @@ function editFor(state, seg) {
 
 function countLine(state) {
   const segments = currentSegments(state);
-  let adopted = 0;
   let chars = 0;
-  for (const seg of segments) {
-    const edit = editFor(state, seg);
-    const text = edit.text.trim();
-    if (!edit.checked || !text) continue;
-    adopted += 1;
-    chars += text.length;
-  }
-  return `表示 ${segments.length} 行 / 抽出する ${adopted} 行 / ${chars} 文字`;
+  for (const seg of segments) chars += editFor(state, seg).text.trim().length;
+  return `表示 ${segments.length} 行 / ${chars} 文字`;
 }
 
 function drawCrop(canvas, image, seg) {
@@ -228,39 +217,19 @@ function renderCandidates() {
   const state = states.get(openKey);
   const list = document.getElementById("ocrList");
   const count = document.getElementById("ocrCount");
-  const thresholds = document.getElementById("ocrThresholds");
-  const slider = document.getElementById("imagePick");
   if (!state || (!state.words && !(state.regions && state.regions.length))) {
     list.replaceChildren();
     count.textContent = "";
-    thresholds.textContent = "";
     paintOverlay();
     return;
   }
   state.priorEdits = [...state.edits.values()];
-  slider.value = String(state.slider);
-  const profile = profileFor(state.slider);
-  thresholds.textContent =
-    `信頼度 ${Math.round(profile.minConfidence)}% 以上、近い単語の結合 ${profile.gapFactor.toFixed(2)}`;
   const segments = currentSegments(state);
   list.replaceChildren();
   segments.forEach((seg, index) => {
     const edit = editFor(state, seg);
     const row = document.createElement("li");
-    row.className = edit.checked ? "ocr-row" : "ocr-row is-off";
-
-    const label = document.createElement("label");
-    label.className = "check";
-    const box = document.createElement("input");
-    box.type = "checkbox";
-    box.checked = edit.checked;
-    box.addEventListener("change", () => {
-      edit.checked = box.checked;
-      renderCandidates();
-    });
-    const caption = document.createElement("span");
-    caption.textContent = "抽出する";
-    label.append(box, caption);
+    row.className = "ocr-row";
 
     const crop = document.createElement("canvas");
     crop.className = "crop";
@@ -268,8 +237,9 @@ function renderCandidates() {
     crop.height = 44;
     drawCrop(crop, state.image, seg);
 
-    const field = document.createElement(seg.manualId ? "textarea" : "input");
-    if (!seg.manualId) field.type = "text";
+    const multiline = Boolean(seg.manualId) || String(edit.text).includes("\n");
+    const field = document.createElement(multiline ? "textarea" : "input");
+    if (!multiline) field.type = "text";
     field.value = edit.text;
     field.setAttribute("aria-label", `原文 ${index + 1}`);
     field.addEventListener("input", () => {
@@ -280,16 +250,12 @@ function renderCandidates() {
 
     const conf = document.createElement("span");
     conf.className = "conf";
-    if (seg.manualId) {
-      const drop = document.createElement("button");
-      drop.type = "button";
-      drop.textContent = "消す";
-      drop.addEventListener("click", () => removeRegion(seg.manualId));
-      conf.append(drop);
-    } else {
-      conf.textContent = `${Math.round(seg.confidence)}%`;
-    }
-    row.append(label, crop, field, conf);
+    const drop = document.createElement("button");
+    drop.type = "button";
+    drop.textContent = "消す";
+    drop.addEventListener("click", () => dismissSegment(segmentKey(seg)));
+    conf.append(drop);
+    row.append(crop, field, conf);
     list.append(row);
   });
   count.textContent = countLine(state);
@@ -304,7 +270,7 @@ function markCards() {
     const state = states.get(key);
     const badge = card.querySelector(".badge");
     if (!badge) continue;
-    if (!state || !state.words) {
+    if (!state || (!state.words && !(state.regions || []).length)) {
       badge.textContent = "";
       continue;
     }
@@ -312,7 +278,7 @@ function markCards() {
     let adopted = 0;
     for (const seg of segments) {
       const edit = state.edits.get(segmentKey(seg));
-      if (edit && edit.checked && edit.text.trim()) adopted += 1;
+      if (edit && edit.text.trim()) adopted += 1;
     }
     badge.textContent = `抽出 ${adopted}`;
   }
@@ -370,7 +336,7 @@ async function selectPicture(pic) {
   openKey = pic.key;
   let state = states.get(pic.key);
   if (!state) {
-    state = { slider: 0, edits: new Map(), words: null, scale: 1, image: null, seedChecks: true, regions: [] };
+    state = { edits: new Map(), words: null, scale: 1, image: null, regions: [], dismissed: [] };
     states.set(pic.key, state);
   }
   const index = pictures.findIndex((item) => item.key === pic.key);
@@ -383,7 +349,6 @@ async function selectPicture(pic) {
   }
   openOcrDialog(pic, state);
   setOcrNote("");
-  document.getElementById("imagePick").value = String(state.slider);
   syncOcrNav();
   if ((state.words && state.image) || (state.regions || []).length) {
     setOcrStatus("");
@@ -393,7 +358,6 @@ async function selectPicture(pic) {
   }
   document.getElementById("ocrList").replaceChildren();
   document.getElementById("ocrCount").textContent = "";
-  document.getElementById("ocrThresholds").textContent = "";
   setOcrStatus("");
   showOcrReady(false);
 }
@@ -403,11 +367,6 @@ async function startOcr() {
   const pic = pictures.find((item) => item.key === openKey);
   const state = pic && states.get(pic.key);
   if (!pic || !state) return;
-  if (state.words && state.image) {
-    showOcrReady(true);
-    renderCandidates();
-    return;
-  }
   hooks.clearMessages();
   setOcrNote("");
   const token = ocrToken;
@@ -444,13 +403,14 @@ async function startOcr() {
       canvas.width / image.naturalWidth
     );
     state.words = words;
+    state.dismissed = [];
     state.pic = pic;
     showSource(pic, state);
     setOcrStatus("");
     showOcrReady(true);
     renderCandidates();
     outcome = "ok";
-    setOcrNote(`${fileName(pic.media)} を読みました。不要な行はチェックを外すか、一括除外を押してください。`);
+    setOcrNote(`${fileName(pic.media)} を読みました。不要な行は消すか、一括削除を押してください。`);
   } catch (err) {
     if (token !== ocrToken) {
       outcome = "cancel";
@@ -458,14 +418,14 @@ async function startOcr() {
     }
     console.error("[ppt-translation-supporter] 画像 OCR:", err);
     setOcrNote(`画像の読み取りに失敗しました: ${err.message || err}`, "error");
-    showOcrReady(false);
+    if (!state.words && !(state.regions || []).length) showOcrReady(false);
   } finally {
     if (token !== ocrToken) return;
     hooks.setBusy(false);
     syncImagePager();
     if (outcome === "cancel") {
       setOcrStatus("");
-      showOcrReady(false);
+      if (!state.words && !(state.regions || []).length) showOcrReady(false);
       setOcrNote("読み込みを停止しました。");
     }
   }
@@ -538,10 +498,7 @@ function syncOcrNav() {
 
 function showOcrReady(ready) {
   const panel = document.getElementById("ocrPanel");
-  const start = document.getElementById("startOcrBtn");
-  const state = states.get(openKey);
   if (panel) panel.hidden = !ready;
-  if (start) start.hidden = Boolean(ready && state && state.words);
 }
 
 async function thumbUrl(pic) {
@@ -587,14 +544,15 @@ async function changeImagePage(delta) {
   await renderImagePage();
 }
 
-function excludeAll() {
+function deleteAll() {
   const state = states.get(openKey);
-  if (!state || (!state.words && !(state.regions || []).length)) return;
-  state.seedChecks = false;
-  for (const seg of currentSegments(state)) {
-    const edit = editFor(state, seg);
-    edit.checked = false;
-  }
+  if (!state) return;
+  const auto = state.words ? clusterWords(state.words, state.scale, profileFromSlider(0)) : [];
+  if (!auto.length && !(state.regions || []).length) return;
+  for (const region of state.regions || []) state.edits.delete(segmentKey(region));
+  state.regions = [];
+  state.dismissed = auto.map((seg) => ({ x0: seg.x0, y0: seg.y0, x1: seg.x1, y1: seg.y1 }));
+  for (const seg of auto) state.edits.delete(segmentKey(seg));
   renderCandidates();
 }
 
@@ -603,7 +561,7 @@ function boxesFor(pic, state) {
   for (const seg of currentSegments(state)) {
     const edit = editFor(state, seg);
     const text = edit.text.trim();
-    if (!edit.checked || !text) continue;
+    if (!text) continue;
     const emu = segmentToEmu(pic, {
       width: state.image.naturalWidth,
       height: state.image.naturalHeight,
@@ -620,7 +578,7 @@ async function applyBoxes() {
   const pic = pictures.find((item) => item.key === openKey);
   const state = pic && states.get(pic.key);
   if (!pic || !state || !state.image) {
-    setOcrNote("載せる行がありません。抽出する行にチェックを入れてください。", "error");
+    setOcrNote("載せる行がありません。", "error");
     return;
   }
   const boxes = boxesFor(pic, state);
@@ -629,7 +587,7 @@ async function applyBoxes() {
   const prefix = boxPrefix(pic);
   const hadBoxes = already.includes(prefix);
   if (!boxes.length && !hadBoxes) {
-    setOcrNote("載せる行がありません。抽出する行にチェックを入れてください。", "error");
+    setOcrNote("載せる行がありません。", "error");
     return;
   }
   hooks.clearMessages();
@@ -735,7 +693,8 @@ function paintOverlay() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, frame.width, frame.height);
   const state = states.get(openKey);
-  const rects = state && state.regions ? state.regions.slice() : [];
+  const rects = state ? currentSegments(state).slice() : [];
+  closeHits = [];
   if (regionDrag) {
     const live = normalizeRect(regionDrag.start, regionDrag.current);
     if (live) rects.push(live);
@@ -750,7 +709,52 @@ function paintOverlay() {
     ctx.lineWidth = 2;
     ctx.fillRect(x, y, w, h);
     ctx.strokeRect(x, y, w, h);
+    if (rect.manualId || rect.text) drawClose(ctx, frame, x, y, w, segmentKey(rect));
   }
+}
+
+let closeHits = [];
+
+function drawClose(ctx, frame, x, y, w, id) {
+  const r = 8;
+  const cx = Math.min(frame.width - r, Math.max(r, x + w));
+  const cy = Math.min(frame.height - r, Math.max(r, y));
+  ctx.beginPath();
+  ctx.fillStyle = "#2563eb";
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#ffffff";
+  ctx.font = "700 13px sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("×", cx, cy + 0.5);
+  closeHits.push({ id, cx, cy, r: r + 4 });
+}
+
+function hitClose(event) {
+  const bounds = event.currentTarget.getBoundingClientRect();
+  const x = event.clientX - bounds.left;
+  const y = event.clientY - bounds.top;
+  for (let i = closeHits.length - 1; i >= 0; i -= 1) {
+    const hit = closeHits[i];
+    if (Math.hypot(x - hit.cx, y - hit.cy) <= hit.r) return hit.id;
+  }
+  return "";
+}
+
+function dismissSegment(id) {
+  const state = states.get(openKey);
+  if (!state || !id) return;
+  if (id.startsWith("region:")) {
+    removeRegion(id.slice("region:".length));
+    return;
+  }
+  const seg = currentSegments(state).find((item) => segmentKey(item) === id);
+  if (!seg) return;
+  state.dismissed = state.dismissed || [];
+  state.dismissed.push({ x0: seg.x0, y0: seg.y0, x1: seg.x1, y1: seg.y1 });
+  state.edits.delete(id);
+  renderCandidates();
 }
 
 function removeRegion(id) {
@@ -837,7 +841,6 @@ async function ocrRegion(rect) {
     state.regions.push(region);
     state.edits.set(segmentKey(region), {
       text: region.text,
-      checked: true,
       edited: false,
       x0: region.x0,
       y0: region.y0,
@@ -880,6 +883,12 @@ function bindRegionDraw() {
   canvas.addEventListener("pointerdown", (event) => {
     if (!hooks || hooks.isBusy()) return;
     if (!img.naturalWidth) return;
+    const closeId = hitClose(event);
+    if (closeId) {
+      event.preventDefault();
+      dismissSegment(closeId);
+      return;
+    }
     const start = eventToImagePx(event, img);
     if (!start) return;
     regionDrag = { start, current: start, pointerId: event.pointerId };
@@ -887,7 +896,10 @@ function bindRegionDraw() {
     paintOverlay();
   });
   canvas.addEventListener("pointermove", (event) => {
-    if (!regionDrag || event.pointerId !== regionDrag.pointerId) return;
+    if (!regionDrag || event.pointerId !== regionDrag.pointerId) {
+      if (!regionDrag) canvas.style.cursor = hitClose(event) ? "pointer" : "crosshair";
+      return;
+    }
     regionDrag.current = eventToImagePx(event, img);
     paintOverlay();
   });
@@ -912,7 +924,7 @@ document.getElementById("ocrPrev").addEventListener("click", () => stepPicture(-
 document.getElementById("ocrNext").addEventListener("click", () => stepPicture(1));
 document.getElementById("startOcrBtn").addEventListener("click", startOcr);
 document.getElementById("stopOcrBtn").addEventListener("click", stopOcr);
-document.getElementById("excludeAllBtn").addEventListener("click", excludeAll);
+document.getElementById("deleteAllBtn").addEventListener("click", deleteAll);
 document.getElementById("applyImageBtn").addEventListener("click", applyBoxes);
 document.getElementById("closeOcrBtn").addEventListener("click", closeOcrDialog);
 document.getElementById("ocrDialog").addEventListener("click", (event) => {
@@ -921,10 +933,3 @@ document.getElementById("ocrDialog").addEventListener("click", (event) => {
 bindRegionDraw();
 document.getElementById("ocrZoomOut").addEventListener("click", () => applyZoom(zoomStep - 1));
 document.getElementById("ocrZoomIn").addEventListener("click", () => applyZoom(zoomStep + 1));
-document.getElementById("imagePick").addEventListener("input", () => {
-  const state = states.get(openKey);
-  if (!state) return;
-  state.slider = Number(document.getElementById("imagePick").value);
-  state.seedChecks = false;
-  renderCandidates();
-});

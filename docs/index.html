@@ -271,25 +271,24 @@
       box-shadow: inset 0 0 0 1px var(--accent);
     }
     button.image-card .badge { color: var(--muted); min-height: 1em; }
-    .slider-row {
-      display: grid;
-      grid-template-columns: auto 1fr auto;
-      gap: 0.6rem;
-      align-items: center;
-      margin-top: 0.75rem;
-    }
     #ocrNote { margin: 0.75rem 0 0; box-shadow: none; }
     #ocrNote[hidden] { display: none; }
-    #ocrList { list-style: none; margin: 0.4rem 0 0; padding: 0; }
+    .ocr-edit-head {
+      display: grid;
+      grid-template-columns: 160px minmax(0, 1fr);
+      gap: 0.45rem;
+      margin-top: 0.35rem;
+    }
+    .ocr-edit-head .meta { margin: 0; }
+    #ocrList { list-style: none; margin: 0.15rem 0 0; padding: 0; }
     .ocr-row {
       display: grid;
-      grid-template-columns: 6.4rem 160px minmax(0, 1fr) 2.8rem;
+      grid-template-columns: 160px minmax(0, 1fr) auto;
       gap: 0.45rem;
       align-items: center;
       padding: 0.35rem 0;
       border-top: 1px solid var(--border);
     }
-    .ocr-row.is-off { opacity: 0.45; }
     .ocr-row input[type="text"] {
       width: 100%;
       border: 1px solid var(--border);
@@ -299,7 +298,6 @@
       background: var(--bg);
       color: var(--text);
     }
-    .check { display: flex; gap: 0.3rem; align-items: center; font-size: 0.8rem; }
     .conf { color: var(--muted); font-size: 0.8rem; text-align: right; }
     body.is-busy #imagePanel,
     body.is-busy #ocrDialog { pointer-events: none; }
@@ -429,7 +427,7 @@
       <div class="row">
         <button type="button" id="openImageBtn">画像からテキスト抽出</button>
       </div>
-      <p class="meta">画像を選択してください。自動抽出開始を押すとテキストを読み、テキストボックスとして被せます</p>
+      <p class="meta">画像を選択してください。自動抽出を押すとテキストを読み、テキストボックスとして被せます</p>
       <div id="imagePanel" hidden>
         <div id="imageList" class="image-list"></div>
         <div id="imagePager" class="image-pager" hidden>
@@ -452,7 +450,7 @@
                 <span class="meta" id="ocrZoomLabel">100%</span>
                 <button type="button" id="ocrZoomIn">拡大</button>
               </div>
-              <div class="ocr-viewport" id="ocrViewport">
+              <div class="ocr-viewport">
                 <div class="ocr-frame" id="ocrFrame">
                   <img id="ocrSource" class="ocr-source" alt="">
                   <canvas id="ocrOverlay"></canvas>
@@ -461,7 +459,7 @@
             </div>
             <button type="button" id="ocrNext" aria-label="次の画像">▶</button>
           </div>
-          <p class="ocr-callout" id="ocrHint">拡大してから、画像上をドラッグすると、囲んだ範囲だけを1件として読みます。</p>
+          <p class="ocr-callout">画像上をドラッグすると、囲んだ範囲だけを1件として読みます。</p>
           <p class="meta">確認終わればページ下部の完了ボタンをクリックしてください</p>
           <div class="ocr-status-row" id="ocrStatusRow" hidden>
             <p class="meta" id="ocrStatus"></p>
@@ -469,18 +467,16 @@
           </div>
           <p class="msg ok" id="ocrNote" role="status" aria-live="polite" hidden></p>
           <div class="row">
-            <button type="button" id="startOcrBtn">自動抽出開始</button>
+            <button type="button" id="startOcrBtn">自動抽出</button>
           </div>
           <div id="ocrPanel" hidden>
-            <div class="slider-row">
-              <span>多め</span>
-              <input id="imagePick" type="range" min="0" max="2" step="1" value="0">
-              <span>確実なところだけ</span>
-            </div>
-            <p class="meta" id="ocrThresholds"></p>
             <p class="meta" id="ocrCount"></p>
             <div class="row">
-              <button type="button" id="excludeAllBtn">一括除外</button>
+              <button type="button" id="deleteAllBtn">一括削除</button>
+            </div>
+            <div class="ocr-edit-head">
+              <span></span>
+              <p class="meta">抽出が不適切な場合は手動で編集してください</p>
             </div>
             <ul id="ocrList"></ul>
           </div>
@@ -565,7 +561,7 @@
       · <span id="appVersion"></span>
     </p>
   </main>
-  <div class="msg-area" id="msgArea" role="status" aria-live="polite">
+  <div class="msg-area" role="status" aria-live="polite">
     <p class="msg busy" id="busyMsg" hidden></p>
     <p class="msg error" id="errorMsg" hidden></p>
     <p class="msg warn" id="warnMsg" hidden></p>

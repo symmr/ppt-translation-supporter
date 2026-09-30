@@ -1,8 +1,7 @@
 (function () {
 "use strict";
 
-// Word boxes come from one OCR pass. The slider only changes which of those
-// boxes are kept and how far apart words may be and still form one line.
+// Word boxes come from one OCR pass. The page always uses the aggressive profile.
 
 function profileFromSlider(t) {
   const u = Math.min(100, Math.max(0, Number(t))) / 100;
@@ -241,14 +240,14 @@ function overlapRatio(a, b) {
   return inter / Math.min(areaA, areaB);
 }
 
-// Slider moves rebuild the rows. A new row stays unchecked unless it still
-// sits on a row the user left checked. seedChecks is only for the first pass.
-function inheritEdit(priors, seg, seedChecks) {
-  const hits = (priors || []).filter((edit) => overlapRatio(edit, seg) >= 0.5);
-  const edited = hits.find((edit) => edit.edited && overlapRatio(edit, seg) >= 0.8);
+// Slider moves rebuild the rows. Preserve manually edited text when the new
+// segment still covers substantially the same image area.
+function inheritEdit(priors, seg) {
+  const edited = (priors || []).find(
+    (edit) => edit.edited && overlapRatio(edit, seg) >= 0.8
+  );
   return {
     text: edited ? edited.text : seg.text,
-    checked: hits.length ? hits.every((edit) => edit.checked) : Boolean(seedChecks),
     edited: Boolean(edited),
   };
 }

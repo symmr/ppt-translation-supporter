@@ -298,14 +298,14 @@ test("a region keeps its line breaks as one extract entry", async () => {
   assert.equal(added.length, 2);
 });
 
-test("slider movement does not check rows the user excluded", () => {
+test("slider movement preserves manually edited text on the same region", () => {
   const priors = [
-    { x0: 0, y0: 0, x1: 40, y1: 20, checked: false, edited: false, text: "組織" },
+    { x0: 0, y0: 0, x1: 40, y1: 20, edited: true, text: "組織（修正）" },
   ];
-  const same = inheritEdit(priors, { x0: 2, y0: 1, x1: 38, y1: 18, text: "組織概要" }, false);
-  assert.equal(same.checked, false);
-  const fresh = inheritEdit([], { x0: 80, y0: 40, x1: 120, y1: 60, text: "新規" }, false);
-  assert.equal(fresh.checked, false);
-  const first = inheritEdit([], { x0: 0, y0: 0, x1: 10, y1: 10, text: "初回" }, true);
-  assert.equal(first.checked, true);
+  const same = inheritEdit(priors, { x0: 2, y0: 1, x1: 38, y1: 18, text: "組織概要" });
+  assert.equal(same.text, "組織（修正）");
+  assert.equal(same.edited, true);
+  const fresh = inheritEdit(priors, { x0: 80, y0: 40, x1: 120, y1: 60, text: "新規" });
+  assert.equal(fresh.text, "新規");
+  assert.equal(fresh.edited, false);
 });
