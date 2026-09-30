@@ -136,6 +136,7 @@ test("text boxes round-trip through the existing extract and inject", async () =
   const xml = await zip.file("ppt/slides/slide1.xml").async("string");
   assert.match(xml, /<a:off x="100" y="200"\/>/);
   assert.match(xml, /lIns="0"/);
+  assert.match(xml, /wrap="square"/);
   assert.match(xml, /algn="l"/);
   assert.match(xml, /<a:noAutofit\/>/);
 
@@ -214,6 +215,52 @@ test("an upscaled bitmap is mapped back onto the original image", () => {
   assert.equal(resolveOcrScale(words, 100, 50, 2), 1);
   const scaled = [{ bbox: { x0: 40, y0: 20, x1: 190, y1: 90 } }];
   assert.equal(resolveOcrScale(scaled, 100, 50, 2), 2);
+});
+
+test("wrapped lines of one block become a single segment", () => {
+  const words = [
+    { text: "AI", confidence: 93, bbox: { x0: 100, y0: 40, x1: 160, y1: 100 } },
+    { text: "observability", confidence: 93, bbox: { x0: 170, y0: 40, x1: 520, y1: 100 } },
+    { text: "has", confidence: 93, bbox: { x0: 530, y0: 40, x1: 620, y1: 100 } },
+    { text: "a", confidence: 93, bbox: { x0: 630, y0: 40, x1: 670, y1: 100 } },
+    { text: "credibility", confidence: 90, bbox: { x0: 180, y0: 108, x1: 420, y1: 168 } },
+    { text: "challenge", confidence: 90, bbox: { x0: 430, y0: 108, x1: 640, y1: 168 } },
+    { text: "Low", confidence: 88, bbox: { x0: 120, y0: 210, x1: 180, y1: 240 } },
+    { text: "accuracy", confidence: 88, bbox: { x0: 190, y0: 210, x1: 320, y1: 240 } },
+    { text: "Gartner", confidence: 90, bbox: { x0: 0, y0: 300, x1: 80, y1: 340 } },
+    { text: "IDC", confidence: 90, bbox: { x0: 220, y0: 300, x1: 280, y1: 340 } },
+  ];
+  const segs = clusterWords(words, 1, profileFromSlider(0));
+  assert.equal(segs.length, 4);
+  assert.equal(segs[0].text, "AI observability has a credibility challenge");
+  assert.equal(segs[0].align, "ctr");
+  assert.equal(segs[0].lines, 2);
+  assert.ok(segs[0].lineH < segs[0].y1 - segs[0].y0);
+  assert.equal(segs[1].text, "Low accuracy");
+  assert.equal(segs[2].text, "Gartner");
+  assert.equal(segs[3].text, "IDC");
+});
+
+test("a wrapped block uses the line height and can be centered", async () => {
+  const zip = await buildZip();
+  await addPictureTextBoxes(zip, [{
+    slidePath: "ppt/slides/slide1.xml",
+    x: 100,
+    y: 200,
+    cx: 900,
+    cy: 1828800,
+    lineCy: 914400,
+    lines: 2,
+    align: "ctr",
+    text: "AI observability has a credibility challenge",
+    fill: "111111",
+    ink: "FFFFFF",
+  }]);
+  const xml = await zip.file("ppt/slides/slide1.xml").async("string");
+  assert.match(xml, /wrap="square"/);
+  assert.match(xml, /anchor="t"/);
+  assert.match(xml, /algn="ctr"/);
+  assert.match(xml, /sz="6624"/);
 });
 
 test("slider movement does not check rows the user excluded", () => {

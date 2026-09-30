@@ -278,6 +278,8 @@
       align-items: center;
       margin-top: 0.75rem;
     }
+    #ocrNote { margin: 0.75rem 0 0; box-shadow: none; }
+    #ocrNote[hidden] { display: none; }
     #ocrList { list-style: none; margin: 0.4rem 0 0; padding: 0; }
     .ocr-row {
       display: grid;
@@ -407,6 +409,7 @@
             <p class="meta" id="ocrStatus"></p>
             <button type="button" id="stopOcrBtn" data-busy-ok="1">停止</button>
           </div>
+          <p class="msg ok" id="ocrNote" role="status" aria-live="polite" hidden></p>
           <div class="row">
             <button type="button" id="startOcrBtn">抽出開始</button>
           </div>

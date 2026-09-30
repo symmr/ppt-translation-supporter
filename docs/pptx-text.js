@@ -873,15 +873,16 @@ function buildTextBox(doc, spec) {
   spPr.appendChild(ln);
 
   const txBody = el(doc, NS_P, "p:txBody");
+  const multi = spec.lines > 1 && spec.lineCy && spec.cy > spec.lineCy * 1.35;
   const bodyPr = el(doc, NS_A, "a:bodyPr");
-  bodyPr.setAttribute("wrap", "none");
-  bodyPr.setAttribute("anchor", "ctr");
-  bodyPr.setAttribute("fontAlgn", "ctr");
+  bodyPr.setAttribute("wrap", "square");
+  bodyPr.setAttribute("anchor", multi ? "t" : "ctr");
+  bodyPr.setAttribute("fontAlgn", multi ? "t" : "ctr");
   for (const name of ["lIns", "tIns", "rIns", "bIns"]) bodyPr.setAttribute(name, "0");
   bodyPr.appendChild(el(doc, NS_A, "a:noAutofit"));
   const p = el(doc, NS_A, "a:p");
   const pPr = el(doc, NS_A, "a:pPr");
-  pPr.setAttribute("algn", "l");
+  pPr.setAttribute("algn", spec.align === "ctr" ? "ctr" : "l");
   const spcBef = el(doc, NS_A, "a:spcBef");
   const spcBefPts = el(doc, NS_A, "a:spcPts");
   spcBefPts.setAttribute("val", "0");
@@ -894,7 +895,8 @@ function buildTextBox(doc, spec) {
   pPr.appendChild(spcAft);
   const r = el(doc, NS_A, "a:r");
   const rPr = el(doc, NS_A, "a:rPr");
-  const heightPt = (Math.max(1, spec.cy) / 914400) * 72;
+  const fontEmu = multi ? spec.lineCy : spec.cy;
+  const heightPt = (Math.max(1, fontEmu) / 914400) * 72;
   const pt = Math.max(1, heightPt * 0.92);
   rPr.setAttribute("lang", "ja-JP");
   rPr.setAttribute("sz", String(Math.round(pt * 100)));
@@ -962,6 +964,9 @@ async function replacePictureTextBoxes(zip, slidePath, namePrefix, boxes) {
       text,
       fill: item.fill,
       ink: item.ink,
+      lineCy: item.lineCy,
+      lines: item.lines,
+      align: item.align,
     }));
     nextId += 1;
   }
@@ -998,6 +1003,9 @@ async function addPictureTextBoxes(zip, boxes) {
         text,
         fill: item.fill,
         ink: item.ink,
+        lineCy: item.lineCy,
+        lines: item.lines,
+        align: item.align,
       }));
       nextId += 1;
       added += 1;

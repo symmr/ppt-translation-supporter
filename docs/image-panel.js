@@ -68,6 +68,16 @@ function setOcrStatus(text) {
   if (row) row.hidden = !text;
 }
 
+// The page-level message area sits under the dialog backdrop, so anything
+// said while the dialog is open has to be shown inside it.
+function setOcrNote(text, kind = "ok") {
+  const el = document.getElementById("ocrNote");
+  if (!el) return;
+  el.textContent = text || "";
+  el.className = `msg ${kind}`;
+  el.hidden = !text;
+}
+
 function stopOcr() {
   if (!hooks || !hooks.isBusy()) return;
   ocrToken += 1;
@@ -78,7 +88,7 @@ function stopOcr() {
   showOcrReady(false);
   hooks.setBusy(false);
   syncImagePager();
-  hooks.showOk("読み込みを停止しました。");
+  setOcrNote("読み込みを停止しました。");
 }
 
 function showSource(pic, state) {
@@ -101,6 +111,7 @@ function openOcrDialog(pic, state) {
 }
 
 function closeOcrDialog() {
+  setOcrNote("");
   const dialog = document.getElementById("ocrDialog");
   if (dialog && dialog.open) dialog.close();
 }
@@ -356,6 +367,7 @@ async function selectPicture(pic) {
     markCards();
   }
   openOcrDialog(pic, state);
+  setOcrNote("");
   document.getElementById("imagePick").value = String(state.slider);
   syncOcrNav();
   if (state.words && state.image) {
@@ -382,6 +394,7 @@ async function startOcr() {
     return;
   }
   hooks.clearMessages();
+  setOcrNote("");
   const token = ocrToken;
   let outcome = "error";
   try {
@@ -422,14 +435,14 @@ async function startOcr() {
     showOcrReady(true);
     renderCandidates();
     outcome = "ok";
-    hooks.showOk(`${fileName(pic.media)} を読みました。不要な行はチェックを外すか、一括除外を押してください。`);
+    setOcrNote(`${fileName(pic.media)} を読みました。不要な行はチェックを外すか、一括除外を押してください。`);
   } catch (err) {
     if (token !== ocrToken) {
       outcome = "cancel";
       return;
     }
     console.error("[ppt-translation-supporter] 画像 OCR:", err);
-    hooks.showError(`画像の読み取りに失敗しました: ${err.message || err}`);
+    setOcrNote(`画像の読み取りに失敗しました: ${err.message || err}`, "error");
     showOcrReady(false);
   } finally {
     if (token !== ocrToken) return;
@@ -438,7 +451,7 @@ async function startOcr() {
     if (outcome === "cancel") {
       setOcrStatus("");
       showOcrReady(false);
-      hooks.showOk("読み込みを停止しました。");
+      setOcrNote("読み込みを停止しました。");
     }
   }
 }
@@ -589,7 +602,7 @@ async function applyBoxes() {
   const pic = pictures.find((item) => item.key === openKey);
   const state = pic && states.get(pic.key);
   if (!pic || !state || !state.words || !state.image) {
-    hooks.showError("載せる行がありません。抽出する行にチェックを入れてください。");
+    setOcrNote("載せる行がありません。抽出開始を押して、抽出する行にチェックを入れてください。", "error");
     return;
   }
   const boxes = boxesFor(pic, state);
@@ -598,25 +611,16 @@ async function applyBoxes() {
   const prefix = boxPrefix(pic);
   const hadBoxes = already.includes(prefix);
   if (!boxes.length && !hadBoxes) {
-    hooks.showError("載せる行がありません。抽出する行にチェックを入れてください。");
+    setOcrNote("載せる行がありません。抽出する行にチェックを入れてください。", "error");
     return;
   }
   hooks.clearMessages();
   try {
     hooks.setBusy(true, "テキストボックスを追加中…");
+    setOcrNote("テキストボックスを追加中…", "busy");
     const result = await replacePictureTextBoxes(zip, pic.slidePath, prefix, boxes);
-    hooks.setProgress("テキストを抽出し直しています…");
-    const blob = await zip.generateAsync({
-      type: "blob",
-      compression: "DEFLATE",
-      compressionOptions: { level: 6 },
-    });
-    const file = hooks.getFile();
-    const nextFile = new File([blob], file.name, {
-      type: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-    });
-    hooks.setFile(nextFile);
-    hooks.setZip(zip);
+    setOcrNote("テキストを抽出し直しています…", "busy");
+    hooks.markDeckEdited();
     const extracted = await extractTextsFromZip(zip);
     const hadPaste = hooks.consumePaste();
     hooks.applyExtract(extracted);
@@ -632,7 +636,7 @@ async function applyBoxes() {
     }
   } catch (err) {
     console.error("[ppt-translation-supporter] テキストボックス追加:", err);
-    hooks.showError(`テキストボックスの追加に失敗しました: ${err.message || err}`);
+    setOcrNote(`テキストボックスの追加に失敗しました: ${err.message || err}`, "error");
   } finally {
     hooks.setBusy(false);
     syncImagePager();

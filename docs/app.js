@@ -32,6 +32,8 @@ const PROMPT_STORAGE_KEY = "ppt-translation-supporter:prompt";
 let sourceFile = null;
 let extracted = null;
 let sourceZip = null;
+// Image text boxes edit sourceZip in place; sourceFile then no longer matches.
+let deckEdited = false;
 let resultBlob = null;
 let resultName = "";
 let busy = false;
@@ -269,6 +271,17 @@ async function handleTxt(file) {
   await applyTranslation(source, file.name);
 }
 
+// Inject mutates the zip it is given, so each attempt needs a fresh copy. The
+// copy is stored uncompressed: it is only reloaded here, never downloaded, and
+// recompressing every image of a large deck takes far longer than the copy.
+async function sourceBytes() {
+  if (!deckEdited) return sourceFile.arrayBuffer();
+  return sourceZip.generateAsync(
+    { type: "uint8array", compression: "STORE" },
+    (meta) => setProgress(`PPTX を読み込み中… ${Math.round(meta.percent)}%`)
+  );
+}
+
 async function applyTranslation(source, sourceLabel) {
   if (busy) return;
   clearMessages();
@@ -311,7 +324,7 @@ async function applyTranslation(source, sourceLabel) {
 
   try {
     setBusy(true, "PPTX を読み込み中…");
-    const zip = await JSZip.loadAsync(await sourceFile.arrayBuffer());
+    const zip = await JSZip.loadAsync(await sourceBytes());
     setProgress("訳文を書き戻し中…");
     const fonts = {
       titleFont: fontFromPicker(titleFontSelect, titleCustomFont),
@@ -374,6 +387,7 @@ function clearDeckState() {
   if (typeof resetImageTools === "function") resetImageTools();
   extracted = null;
   sourceZip = null;
+  deckEdited = false;
   resultBlob = null;
   resultName = "";
   deckFonts = [];
@@ -443,9 +457,7 @@ bindFontPicker(bodyFontSelect, bodyCustomFont, bodyFontPreview);
 
 bindImageTools({
   getZip: () => sourceZip,
-  getFile: () => sourceFile,
-  setZip: (zip) => { sourceZip = zip; },
-  setFile: (file) => { sourceFile = file; },
+  markDeckEdited: () => { deckEdited = true; },
   isBusy: () => busy,
   setBusy,
   setProgress,

@@ -115,7 +115,89 @@ function clusterWords(words, scale, profile) {
     if (deduped.some((prev) => iou(seg, prev) > 0.55)) return;
     deduped.push(seg);
   });
-  return deduped;
+  return groupWrappedLines(deduped);
+}
+
+function joinText(a, b) {
+  const prev = a.slice(-1);
+  const next = b.slice(0, 1);
+  if (!prev || !next) return a + b;
+  const space = prev.charCodeAt(0) < 128 && next.charCodeAt(0) < 128;
+  return a + (space ? " " : "") + b;
+}
+
+// A wrapped title or sentence is several OCR lines of the same size, stacked
+// tightly, sharing the same horizontal span. A shorter centered second line
+// still overlaps the first. A label in another column does not.
+function continuesBlock(block, next) {
+  const prev = block.members[block.members.length - 1];
+  const ph = prev.lineH;
+  const nh = next.y1 - next.y0;
+  const taller = Math.max(ph, nh);
+  const shorter = Math.max(1, Math.min(ph, nh));
+  if (taller > shorter * 1.45) return false;
+  const yOverlap = Math.min(prev.y1, next.y1) - Math.max(prev.y0, next.y0);
+  if (yOverlap >= shorter * 0.55) {
+    if (taller > shorter * 2.2) return false;
+    if (next.x0 < prev.x1 - 4) return false;
+    return next.x0 <= block.x1 + shorter * 0.8;
+  }
+  const gap = next.y0 - prev.y1;
+  if (gap > shorter * 0.55 || gap < -shorter * 0.25) return false;
+  const overlap = Math.min(prev.x1, next.x1) - Math.max(prev.x0, next.x0);
+  const narrow = Math.min(prev.x1 - prev.x0, next.x1 - next.x0);
+  return narrow > 0 && overlap >= narrow * 0.45;
+}
+
+function blockAlign(members) {
+  if (members.length < 2) return "l";
+  const x0 = Math.min(...members.map((line) => line.x0));
+  const x1 = Math.max(...members.map((line) => line.x1));
+  const width = x1 - x0;
+  if (width <= 0) return "l";
+  const mid = (x0 + x1) / 2;
+  const centered = members.every((line) => Math.abs((line.x0 + line.x1) / 2 - mid) <= width * 0.12);
+  return centered ? "ctr" : "l";
+}
+
+function groupWrappedLines(segments) {
+  const blocks = [];
+  for (const seg of segments) {
+    const lineH = seg.y1 - seg.y0;
+    const prev = blocks[blocks.length - 1];
+    if (prev && continuesBlock(prev, seg)) {
+      prev.text = joinText(prev.text, seg.text);
+      prev.confidence = (prev.confidence * prev.lines + seg.confidence) / (prev.lines + 1);
+      prev.x0 = Math.min(prev.x0, seg.x0);
+      prev.y0 = Math.min(prev.y0, seg.y0);
+      prev.x1 = Math.max(prev.x1, seg.x1);
+      prev.y1 = Math.max(prev.y1, seg.y1);
+      prev.lineH = (prev.lineH * prev.lines + lineH) / (prev.lines + 1);
+      prev.lines += 1;
+      prev.members.push({ ...seg, lineH });
+      continue;
+    }
+    blocks.push({
+      ...seg,
+      lineH,
+      lines: 1,
+      members: [{ ...seg, lineH }],
+    });
+  }
+  return blocks.map((block) => {
+    const align = blockAlign(block.members);
+    return {
+      text: block.text,
+      confidence: block.confidence,
+      x0: block.x0,
+      y0: block.y0,
+      x1: block.x1,
+      y1: block.y1,
+      lineH: block.lineH,
+      lines: block.lines,
+      align,
+    };
+  });
 }
 
 function segmentKey(seg) {
@@ -191,12 +273,17 @@ function segmentToEmu(pic, imageSize, seg, pad) {
   rx1 = Math.min(1, rx1);
   ry1 = Math.min(1, ry1);
   if (rx1 - rx0 < 0.002 || ry1 - ry0 < 0.002) return null;
+  const lineH = seg.lineH || (y1 - y0);
+  const lineCy = Math.max(1, Math.round((mapY(Math.min(imgH, y0 + lineH)) - mapY(y0)) * pic.cy));
   return {
     slidePath: pic.slidePath,
     x: Math.round(pic.x + rx0 * pic.cx),
     y: Math.round(pic.y + ry0 * pic.cy),
     cx: Math.max(1, Math.round((rx1 - rx0) * pic.cx)),
     cy: Math.max(1, Math.round((ry1 - ry0) * pic.cy)),
+    lineCy,
+    lines: seg.lines || 1,
+    align: seg.align === "ctr" ? "ctr" : "l",
   };
 }
 
