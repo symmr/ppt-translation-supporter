@@ -6,6 +6,7 @@
   <title>PPT Translation Supporter</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js" integrity="sha384-+mbV2IY1Zk/X1p/nWllGySJSUN8uMs+gUAN10Or95UBH0fpj6GfKgPmgC5EXieXG" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js" crossorigin="anonymous"></script>
   <style>
     :root {
       color-scheme: light dark;
@@ -52,7 +53,7 @@
       line-height: 1.5;
     }
     main {
-      max-width: 760px;
+      max-width: 920px;
       margin: 0 auto;
       /* bottom padding keeps the fixed message area from covering content */
       padding: 2rem 1.25rem 8rem;
@@ -162,7 +163,7 @@
       left: 50%;
       bottom: 1rem;
       transform: translateX(-50%);
-      width: min(720px, calc(100% - 2rem));
+      width: min(880px, calc(100% - 2rem));
       display: flex;
       flex-direction: column;
       gap: 0.4rem;
@@ -239,6 +240,120 @@
       overflow: hidden;
       text-overflow: ellipsis;
     }
+    .image-list { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0.75rem 0; }
+    .image-pager {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      margin: 0.15rem 0 0.75rem;
+    }
+    .image-pager[hidden] { display: none; }
+    .image-pager .meta { margin: 0; }
+    button.image-card {
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 0.2rem;
+      width: 148px;
+      padding: 0.35rem;
+      font-size: 0.75rem;
+      line-height: 1.3;
+      text-align: left;
+    }
+    button.image-card img {
+      width: 100%;
+      height: 72px;
+      object-fit: contain;
+      background: var(--bg);
+    }
+    button.image-card.is-on {
+      border-color: var(--accent);
+      box-shadow: inset 0 0 0 1px var(--accent);
+    }
+    button.image-card .badge { color: var(--muted); min-height: 1em; }
+    .slider-row {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      gap: 0.6rem;
+      align-items: center;
+      margin-top: 0.75rem;
+    }
+    #ocrList { list-style: none; margin: 0.4rem 0 0; padding: 0; }
+    .ocr-row {
+      display: grid;
+      grid-template-columns: 6.4rem 160px minmax(0, 1fr) 2.8rem;
+      gap: 0.45rem;
+      align-items: center;
+      padding: 0.35rem 0;
+      border-top: 1px solid var(--border);
+    }
+    .ocr-row.is-off { opacity: 0.45; }
+    .ocr-row input[type="text"] {
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.35rem 0.5rem;
+      font: inherit;
+      background: var(--bg);
+      color: var(--text);
+    }
+    .check { display: flex; gap: 0.3rem; align-items: center; font-size: 0.8rem; }
+    .conf { color: var(--muted); font-size: 0.8rem; text-align: right; }
+    body.is-busy #imagePanel,
+    body.is-busy #ocrDialog { pointer-events: none; }
+    body.is-busy #stopOcrBtn { pointer-events: auto; }
+    #ocrDialog {
+      width: min(880px, calc(100vw - 2rem));
+      max-width: calc(100vw - 2rem);
+      max-height: min(86vh, 900px);
+      margin: auto;
+      padding: 0;
+      border: none;
+      background: transparent;
+      color: var(--text);
+    }
+    #ocrDialog::backdrop { background: rgba(0, 0, 0, 0.45); }
+    .ocr-sheet {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1rem 1.1rem 1.15rem;
+      max-height: min(86vh, 900px);
+      overflow: auto;
+    }
+    .ocr-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      margin-bottom: 0.35rem;
+    }
+    .ocr-head h3 { margin: 0; font-size: 1rem; font-weight: 600; }
+    .ocr-source {
+      display: block;
+      width: 100%;
+      max-height: 280px;
+      object-fit: contain;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+    .ocr-nav {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      gap: 0.45rem;
+      align-items: center;
+      margin-top: 0.35rem;
+    }
+    .ocr-status-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.6rem;
+      margin-top: 0.35rem;
+    }
+    .ocr-status-row[hidden] { display: none; }
+    .ocr-status-row .meta { margin: 0; }
     #fileInput, #txtInput { display: none; }
   </style>
 </head>
@@ -264,6 +379,55 @@
         <span class="step-num">2</span>
         <h2>テキスト抽出とプロンプト</h2>
       </div>
+      <div class="row">
+        <button type="button" id="openImageBtn">画像からテキスト抽出</button>
+      </div>
+      <p class="meta">画像を選択してください。抽出開始を押すとテキストを読み、テキストボックスとして被せます</p>
+      <div id="imagePanel" hidden>
+        <div id="imageList" class="image-list"></div>
+        <div id="imagePager" class="image-pager" hidden>
+          <button type="button" id="imagePrev">前へ</button>
+          <span class="meta" id="imagePageLabel"></span>
+          <button type="button" id="imageNext">次へ</button>
+        </div>
+      </div>
+      <dialog id="ocrDialog">
+        <div class="ocr-sheet">
+          <div class="ocr-head">
+            <h3 id="ocrTitle"></h3>
+            <button type="button" id="closeOcrBtn">閉じる</button>
+          </div>
+          <div class="ocr-nav">
+            <button type="button" id="ocrPrev" aria-label="前の画像">◀</button>
+            <img id="ocrSource" class="ocr-source" alt="">
+            <button type="button" id="ocrNext" aria-label="次の画像">▶</button>
+          </div>
+          <p class="meta" id="ocrHint">確認終わればページ下部の完了ボタンをクリックしてください</p>
+          <div class="ocr-status-row" id="ocrStatusRow" hidden>
+            <p class="meta" id="ocrStatus"></p>
+            <button type="button" id="stopOcrBtn" data-busy-ok="1">停止</button>
+          </div>
+          <div class="row">
+            <button type="button" id="startOcrBtn">抽出開始</button>
+          </div>
+          <div id="ocrPanel" hidden>
+            <div class="slider-row">
+              <span>多め</span>
+              <input id="imagePick" type="range" min="0" max="2" step="1" value="0">
+              <span>確実なところだけ</span>
+            </div>
+            <p class="meta" id="ocrThresholds"></p>
+            <p class="meta" id="ocrCount"></p>
+            <div class="row">
+              <button type="button" id="excludeAllBtn">一括除外</button>
+            </div>
+            <ul id="ocrList"></ul>
+          </div>
+          <div class="row">
+            <button type="button" class="primary" id="applyImageBtn">完了</button>
+          </div>
+        </div>
+      </dialog>
       <p class="meta" id="extractMeta"></p>
       <p class="meta">下のプロンプトと本文をコピーし、ChatGPT や Claude などの LLM に貼り付けて翻訳してください。返ってきた訳文は次のステップで貼り戻します。</p>
       <label for="promptBox">翻訳プロンプト<span class="hint">（編集できます。訳先の言語や文体を変えたい場合はここを書き換えてください。内容はこのブラウザに保存されます）</span></label>
@@ -356,7 +520,7 @@
           if (data.version) version = data.version;
         }
       } catch (_) {}
-      for (const file of ["pptx-text.js", "app.js"]) {
+      for (const file of ["pptx-text.js", "image-text.js", "image-panel.js", "app.js"]) {
         await new Promise((resolve, reject) => {
           const script = document.createElement("script");
           script.src = `${file}?v=${encodeURIComponent(version)}`;

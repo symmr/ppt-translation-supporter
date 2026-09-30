@@ -70,7 +70,10 @@ function setStepState(el, state) {
 function setBusy(on, label) {
   busy = on;
   document.body.classList.toggle("is-busy", on);
-  for (const el of document.querySelectorAll("button, .opt input, .opt select")) el.disabled = on;
+  for (const el of document.querySelectorAll("button, .opt input, .opt select")) {
+    if (el.hasAttribute("data-busy-ok")) continue;
+    el.disabled = on;
+  }
   show(busyMsg, on ? label || "処理中…" : "", "busy");
 }
 
@@ -368,6 +371,7 @@ async function applyTranslation(source, sourceLabel) {
 // never be carried over onto the new file. The prompt is deliberately kept: it
 // is a saved setting, not per-file data.
 function clearDeckState() {
+  if (typeof resetImageTools === "function") resetImageTools();
   extracted = null;
   sourceZip = null;
   resultBlob = null;
@@ -436,6 +440,38 @@ document.getElementById("resetBtn").addEventListener("click", resetAll);
 resetFontPickers([]);
 bindFontPicker(titleFontSelect, titleCustomFont, titleFontPreview);
 bindFontPicker(bodyFontSelect, bodyCustomFont, bodyFontPreview);
+
+bindImageTools({
+  getZip: () => sourceZip,
+  getFile: () => sourceFile,
+  setZip: (zip) => { sourceZip = zip; },
+  setFile: (file) => { sourceFile = file; },
+  isBusy: () => busy,
+  setBusy,
+  setProgress,
+  clearMessages,
+  showOk: (text) => show(okMsg, text),
+  showError: (text) => show(errorMsg, text),
+  consumePaste: () => {
+    const had = Boolean(pasteBox.value.trim());
+    if (!had) return false;
+    pasteBox.value = "";
+    txtMeta.hidden = true;
+    txtMeta.textContent = "";
+    return true;
+  },
+  applyExtract: (next) => {
+    extracted = next;
+    extractBox.value = next.text;
+    extractMeta.textContent = `${next.slideCount} 枚 · ${next.uidCount} 件のテキスト`;
+    resultBlob = null;
+    resultName = "";
+    resultMeta.textContent = "";
+    step4.hidden = true;
+    setStepState(step4, "is-wait");
+    setStepState(step3, "");
+  },
+});
 
 promptBox.addEventListener("input", () => storePrompt(promptBox.value));
 document.getElementById("resetPromptBtn").addEventListener("click", () => {

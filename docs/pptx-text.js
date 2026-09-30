@@ -34,7 +34,7 @@ const TRANSLATION_PROMPT = `あなたはプロのローカライズ翻訳者で�
 1. 「uid_0001」のような uid 行は、翻訳・改変・削除・並べ替えをせず、そのまま出力する。
 2. 「[0]...[/0]」のようなタグは、番号・個数・順序・開閉をすべて維持する。タグの中のテキストだけを翻訳し、タグ自体は一切追加・削除・変更しない。空のタグ([2][/2])もそのまま残す。
 3. 入力の行構造(uid 行 → 本文行)を厳密に保つ。
-4. 出力は翻訳結果のテキストのみ。前置き・解説を付けない。
+4. 出力は翻訳結果のテキストのみ。前置き・解説を付けない。出力結果はコードブロックとし、改行も適切に維持する。
 5. 製品名・固有名詞のみ原文のまま残す。それ以外の英文はすべて日本語に訳す。一般語・説明文・見出し・ラベルを英語のまま残さない。
 6. 文体は常体(だ・である調)で統一する。見出しや短い名詞句は体言止めを適切に用いる。
 7. 訳文が対応するタグの範囲からはみ出さないようにする(各タグ内は、その原文に対応する訳のみを入れる)。
@@ -679,6 +679,334 @@ function extractOutputName(originalName) {
   return `${base}_to_translate.txt`;
 }
 
+const REL_IMAGE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
+const NS_R_ATTR = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+const RASTER_RE = /\.(png|jpe?g|webp)$/i;
+const SRC_RECT_BASE = 100000;
+
+function numAttr(el, name) {
+  if (!el) return 0;
+  const value = Number(el.getAttribute(name) || "0");
+  return Number.isFinite(value) ? value : 0;
+}
+
+function readXfrm(xfrm) {
+  if (!xfrm) return null;
+  const off = firstChildLocal(xfrm, "off");
+  const ext = firstChildLocal(xfrm, "ext");
+  const chOff = firstChildLocal(xfrm, "chOff");
+  const chExt = firstChildLocal(xfrm, "chExt");
+  if (!off || !ext) return null;
+  return {
+    x: numAttr(off, "x"),
+    y: numAttr(off, "y"),
+    cx: Math.abs(numAttr(ext, "cx")),
+    cy: Math.abs(numAttr(ext, "cy")),
+    chx: numAttr(chOff, "x"),
+    chy: numAttr(chOff, "y"),
+    chcx: Math.abs(numAttr(chExt, "cx")),
+    chcy: Math.abs(numAttr(chExt, "cy")),
+  };
+}
+
+function readSrcRect(pic) {
+  const nodes = pic.getElementsByTagNameNS(NS_A, "srcRect");
+  const src = nodes && nodes[0];
+  const read = (name) => (src ? numAttr(src, name) : 0);
+  const l = read("l");
+  const t = read("t");
+  const r = read("r");
+  const b = read("b");
+  return {
+    l,
+    t,
+    r,
+    b,
+    visibleW: Math.max(0, 1 - (l + r) / SRC_RECT_BASE),
+    visibleH: Math.max(0, 1 - (t + b) / SRC_RECT_BASE),
+  };
+}
+
+function blipEmbedId(pic) {
+  const nodes = pic.getElementsByTagNameNS(NS_A, "blip");
+  const blip = nodes && nodes[0];
+  if (!blip) return "";
+  return blip.getAttributeNS(NS_R_ATTR, "embed")
+    || blip.getAttribute("r:embed")
+    || "";
+}
+
+function picXfrm(pic) {
+  const spPr = firstChildLocal(pic, "spPr");
+  return readXfrm(spPr && firstChildLocal(spPr, "xfrm"));
+}
+
+function groupXfrm(group) {
+  const grpSpPr = firstChildLocal(group, "grpSpPr");
+  return readXfrm(grpSpPr && firstChildLocal(grpSpPr, "xfrm"));
+}
+
+function picName(pic) {
+  const nv = firstChildLocal(pic, "nvPicPr");
+  const cNvPr = nv && firstChildLocal(nv, "cNvPr");
+  return (cNvPr && cNvPr.getAttribute("name")) || "";
+}
+
+// Slide-placed png/jpeg/webp only. Layouts, masters, notes, and EMF stay out,
+// matching PPT Finalizer's compressible-image set.
+async function listSlideRasterPictures(zip) {
+  const slides = await getPresentationSlideOrder(zip);
+  const pictures = [];
+  for (let slideIndex = 0; slideIndex < slides.length; slideIndex += 1) {
+    const slidePath = slides[slideIndex];
+    const slideFile = zip.file(slidePath);
+    const relsFile = zip.file(relsPathForPart(slidePath));
+    if (!slideFile || !relsFile) continue;
+    const rels = parseRelationships(await relsFile.async("string"));
+    const mediaById = new Map();
+    for (const rel of rels) {
+      if (rel.type !== REL_IMAGE || !rel.id) continue;
+      mediaById.set(rel.id, resolveZipPath(slidePath, rel.target));
+    }
+    const doc = parseXmlAt(await slideFile.async("string"), slidePath);
+    const tree = getSpTree(doc);
+    if (!tree) continue;
+    let occurrence = 0;
+
+    const walk = (container, ox, oy, sx, sy) => {
+      for (const child of shapeChildren(container)) {
+        if (child.localName === "grpSp") {
+          const box = groupXfrm(child);
+          if (!box || !box.chcx || !box.chcy) {
+            walk(child, ox, oy, sx, sy);
+            continue;
+          }
+          const gsx = sx * (box.cx / box.chcx);
+          const gsy = sy * (box.cy / box.chcy);
+          walk(
+            child,
+            ox + box.x * sx - box.chx * gsx,
+            oy + box.y * sy - box.chy * gsy,
+            gsx,
+            gsy
+          );
+          continue;
+        }
+        if (child.localName !== "pic") continue;
+        const media = mediaById.get(blipEmbedId(child)) || "";
+        if (!RASTER_RE.test(media)) continue;
+        const box = picXfrm(child);
+        if (!box || box.cx <= 0 || box.cy <= 0) continue;
+        occurrence += 1;
+        pictures.push({
+          key: `${slidePath}:${occurrence}`,
+          slideIndex: slideIndex + 1,
+          slidePath,
+          name: picName(child),
+          media,
+          x: Math.round(ox + box.x * sx),
+          y: Math.round(oy + box.y * sy),
+          cx: Math.round(box.cx * sx),
+          cy: Math.round(box.cy * sy),
+          src: readSrcRect(child),
+        });
+      }
+    };
+    walk(tree, 0, 0, 1, 1);
+  }
+  return pictures;
+}
+
+function maxShapeId(doc) {
+  let max = 1;
+  const nodes = doc.getElementsByTagNameNS(NS_P, "cNvPr");
+  for (let i = 0; i < nodes.length; i += 1) {
+    const id = Number(nodes[i].getAttribute("id") || "0");
+    if (id > max) max = id;
+  }
+  return max;
+}
+
+function hexColor(value, fallback) {
+  const hex = String(value || "").replace("#", "").toUpperCase();
+  return /^[0-9A-F]{6}$/.test(hex) ? hex : fallback;
+}
+
+function el(doc, ns, name) {
+  return doc.createElementNS(ns, name);
+}
+
+function buildTextBox(doc, spec) {
+  const sp = el(doc, NS_P, "p:sp");
+  const nv = el(doc, NS_P, "p:nvSpPr");
+  const cNvPr = el(doc, NS_P, "p:cNvPr");
+  cNvPr.setAttribute("id", String(spec.id));
+  cNvPr.setAttribute("name", spec.name);
+  const cNvSpPr = el(doc, NS_P, "p:cNvSpPr");
+  cNvSpPr.setAttribute("txBox", "1");
+  nv.appendChild(cNvPr);
+  nv.appendChild(cNvSpPr);
+  nv.appendChild(el(doc, NS_P, "p:nvPr"));
+
+  const spPr = el(doc, NS_P, "p:spPr");
+  const xfrm = el(doc, NS_A, "a:xfrm");
+  const off = el(doc, NS_A, "a:off");
+  off.setAttribute("x", String(spec.x));
+  off.setAttribute("y", String(spec.y));
+  const ext = el(doc, NS_A, "a:ext");
+  ext.setAttribute("cx", String(Math.max(1, spec.cx)));
+  ext.setAttribute("cy", String(Math.max(1, spec.cy)));
+  xfrm.appendChild(off);
+  xfrm.appendChild(ext);
+  const geom = el(doc, NS_A, "a:prstGeom");
+  geom.setAttribute("prst", "rect");
+  geom.appendChild(el(doc, NS_A, "a:avLst"));
+  const fill = el(doc, NS_A, "a:solidFill");
+  const fillClr = el(doc, NS_A, "a:srgbClr");
+  fillClr.setAttribute("val", hexColor(spec.fill, "FFFFFF"));
+  fill.appendChild(fillClr);
+  const ln = el(doc, NS_A, "a:ln");
+  ln.appendChild(el(doc, NS_A, "a:noFill"));
+  spPr.appendChild(xfrm);
+  spPr.appendChild(geom);
+  spPr.appendChild(fill);
+  spPr.appendChild(ln);
+
+  const txBody = el(doc, NS_P, "p:txBody");
+  const bodyPr = el(doc, NS_A, "a:bodyPr");
+  bodyPr.setAttribute("wrap", "none");
+  bodyPr.setAttribute("anchor", "ctr");
+  bodyPr.setAttribute("fontAlgn", "ctr");
+  for (const name of ["lIns", "tIns", "rIns", "bIns"]) bodyPr.setAttribute(name, "0");
+  bodyPr.appendChild(el(doc, NS_A, "a:noAutofit"));
+  const p = el(doc, NS_A, "a:p");
+  const pPr = el(doc, NS_A, "a:pPr");
+  pPr.setAttribute("algn", "l");
+  const spcBef = el(doc, NS_A, "a:spcBef");
+  const spcBefPts = el(doc, NS_A, "a:spcPts");
+  spcBefPts.setAttribute("val", "0");
+  spcBef.appendChild(spcBefPts);
+  const spcAft = el(doc, NS_A, "a:spcAft");
+  const spcAftPts = el(doc, NS_A, "a:spcPts");
+  spcAftPts.setAttribute("val", "0");
+  spcAft.appendChild(spcAftPts);
+  pPr.appendChild(spcBef);
+  pPr.appendChild(spcAft);
+  const r = el(doc, NS_A, "a:r");
+  const rPr = el(doc, NS_A, "a:rPr");
+  const heightPt = (Math.max(1, spec.cy) / 914400) * 72;
+  const pt = Math.max(1, heightPt * 0.92);
+  rPr.setAttribute("lang", "ja-JP");
+  rPr.setAttribute("sz", String(Math.round(pt * 100)));
+  rPr.setAttribute("dirty", "0");
+  const ink = el(doc, NS_A, "a:solidFill");
+  const inkClr = el(doc, NS_A, "a:srgbClr");
+  inkClr.setAttribute("val", hexColor(spec.ink, "222222"));
+  ink.appendChild(inkClr);
+  rPr.appendChild(ink);
+  for (const tag of ["latin", "ea", "cs"]) {
+    const face = el(doc, NS_A, `a:${tag}`);
+    face.setAttribute("typeface", DEFAULT_FONT);
+    rPr.appendChild(face);
+  }
+  const t = el(doc, NS_A, "a:t");
+  t.textContent = spec.text;
+  r.appendChild(rPr);
+  r.appendChild(t);
+  p.appendChild(pPr);
+  p.appendChild(r);
+  txBody.appendChild(bodyPr);
+  txBody.appendChild(el(doc, NS_A, "a:lstStyle"));
+  txBody.appendChild(p);
+
+  sp.appendChild(nv);
+  sp.appendChild(spPr);
+  sp.appendChild(txBody);
+  return sp;
+}
+
+function shapeNameOf(sp) {
+  const nv = firstChildLocal(sp, "nvSpPr");
+  const cNvPr = nv && firstChildLocal(nv, "cNvPr");
+  return (cNvPr && cNvPr.getAttribute("name")) || "";
+}
+
+// Drop earlier boxes for one picture, then add the current set.
+// namePrefix is unique per picture, e.g. "imgtext-1-2-".
+async function replacePictureTextBoxes(zip, slidePath, namePrefix, boxes) {
+  const entry = zip.file(slidePath);
+  if (!entry || !namePrefix) return { added: 0, removed: 0 };
+  const doc = parseXmlAt(await entry.async("string"), slidePath);
+  const tree = getSpTree(doc);
+  if (!tree) return { added: 0, removed: 0 };
+  let removed = 0;
+  for (const child of elementChildren(tree)) {
+    if (child.localName !== "sp") continue;
+    if (!shapeNameOf(child).startsWith(namePrefix)) continue;
+    tree.removeChild(child);
+    removed += 1;
+  }
+  let nextId = maxShapeId(doc) + 1;
+  let added = 0;
+  for (const item of boxes || []) {
+    const text = String(item.text || "").trim();
+    if (!text) continue;
+    added += 1;
+    tree.appendChild(buildTextBox(doc, {
+      id: nextId,
+      name: `${namePrefix}${added}`,
+      x: Math.round(item.x),
+      y: Math.round(item.y),
+      cx: Math.round(item.cx),
+      cy: Math.round(item.cy),
+      text,
+      fill: item.fill,
+      ink: item.ink,
+    }));
+    nextId += 1;
+  }
+  if (added || removed) zip.file(slidePath, serializeXml(doc));
+  return { added, removed };
+}
+
+// boxes: { slidePath, x, y, cx, cy, text, fill, ink } in slide EMU.
+async function addPictureTextBoxes(zip, boxes) {
+  const byPath = new Map();
+  for (const box of boxes || []) {
+    if (!box || !box.slidePath) continue;
+    if (!byPath.has(box.slidePath)) byPath.set(box.slidePath, []);
+    byPath.get(box.slidePath).push(box);
+  }
+  let added = 0;
+  for (const [path, items] of byPath) {
+    const entry = zip.file(path);
+    if (!entry) continue;
+    const doc = parseXmlAt(await entry.async("string"), path);
+    const tree = getSpTree(doc);
+    if (!tree) continue;
+    let nextId = maxShapeId(doc) + 1;
+    for (const item of items) {
+      const text = String(item.text || "").trim();
+      if (!text) continue;
+      tree.appendChild(buildTextBox(doc, {
+        id: nextId,
+        name: `imgtext-${nextId}`,
+        x: Math.round(item.x),
+        y: Math.round(item.y),
+        cx: Math.round(item.cx),
+        cy: Math.round(item.cy),
+        text,
+        fill: item.fill,
+        ink: item.ink,
+      }));
+      nextId += 1;
+      added += 1;
+    }
+    zip.file(path, serializeXml(doc));
+  }
+  return { added };
+}
+
 const api = {
   TRANSLATION_PROMPT,
   DEFAULT_FONT,
@@ -691,6 +1019,9 @@ const api = {
   formatExtractFile,
   translatedOutputName,
   extractOutputName,
+  listSlideRasterPictures,
+  addPictureTextBoxes,
+  replacePictureTextBoxes,
   parseXml,
   runsToTaggedText,
   setParagraphText,
