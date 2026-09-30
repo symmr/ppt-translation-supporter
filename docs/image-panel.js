@@ -102,9 +102,13 @@ function showSource(pic, state) {
   if (card && card.src) img.src = card.src;
 }
 
+function pictureHeading(pic) {
+  const where = pic.label || `スライド ${pic.slideIndex}`;
+  return `${where}  ${fileName(pic.media)}`;
+}
+
 function openOcrDialog(pic, state) {
-  document.getElementById("ocrTitle").textContent =
-    `スライド ${pic.slideIndex}  ${fileName(pic.media)}`;
+  document.getElementById("ocrTitle").textContent = pictureHeading(pic);
   showSource(pic, state);
   const dialog = document.getElementById("ocrDialog");
   if (!dialog.open) dialog.showModal();
@@ -351,7 +355,7 @@ function getWorker() {
 
 async function loadImage(pic) {
   const entry = hooks.getZip().file(pic.media);
-  if (!entry) throw new Error(`${pic.media} が PPTX 内にありません`);
+  if (!entry) throw new Error(`${pic.media} がファイル内にありません`);
   const bytes = await entry.async("uint8array");
   const url = URL.createObjectURL(new Blob([bytes], { type: mimeFor(pic.media) }));
   urls.push(url);
@@ -483,13 +487,14 @@ async function openPanel() {
   hooks.clearMessages();
   try {
     hooks.setBusy(true, "画像を列挙中…");
-    pictures = await listSlideRasterPictures(hooks.getZip());
+    const listPictures = hooks.listPictures || listSlideRasterPictures;
+    pictures = await listPictures(hooks.getZip());
     const list = document.getElementById("imageList");
     list.replaceChildren();
     if (!pictures.length) {
       const empty = document.createElement("p");
       empty.className = "meta";
-      empty.textContent = "スライドに貼られた png / jpeg / webp はありません。";
+      empty.textContent = "貼られた png / jpeg / webp はありません。";
       list.append(empty);
       return;
     }
@@ -562,7 +567,7 @@ async function renderImagePage() {
     img.alt = "";
     img.src = await thumbUrl(pic);
     const caption = document.createElement("span");
-    caption.textContent = `スライド ${pic.slideIndex}  ${fileName(pic.media)}`;
+    caption.textContent = pictureHeading(pic);
     const badge = document.createElement("span");
     badge.className = "badge";
     card.append(img, caption, badge);
@@ -631,10 +636,12 @@ async function applyBoxes() {
   try {
     hooks.setBusy(true, "テキストボックスを追加中…");
     setOcrNote("テキストボックスを追加中…", "busy");
-    const result = await replacePictureTextBoxes(zip, pic.slidePath, prefix, boxes);
+    const replaceBoxes = hooks.replaceBoxes || replacePictureTextBoxes;
+    const result = await replaceBoxes(zip, pic.slidePath, prefix, boxes);
     setOcrNote("テキストを抽出し直しています…", "busy");
     hooks.markDeckEdited();
-    const extracted = await extractTextsFromZip(zip);
+    const extractTexts = hooks.extractTexts || extractTextsFromZip;
+    const extracted = await extractTexts(zip);
     const hadPaste = hooks.consumePaste();
     hooks.applyExtract(extracted);
     markCards();

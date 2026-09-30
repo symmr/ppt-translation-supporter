@@ -30,6 +30,7 @@ const CUSTOM_VALUE = "__custom__";
 const PROMPT_STORAGE_KEY = "ppt-translation-supporter:prompt";
 
 let sourceFile = null;
+let sourceKind = "pptx";
 let extracted = null;
 let sourceZip = null;
 // Image text boxes edit sourceZip in place; sourceFile then no longer matches.
@@ -106,7 +107,7 @@ function populateFontSelect(selectEl, customInput, deckFonts, desired) {
   const inDeck = deckFonts.filter(({ name }) => !presetSet.has(name));
   if (inDeck.length) {
     const group = document.createElement("optgroup");
-    group.label = "この PPTX 内";
+    group.label = "このファイル内";
     for (const { name, count } of inDeck) addOption(group, name, `${name}（${count} 箇所）`);
     selectEl.appendChild(group);
   }
@@ -217,24 +218,53 @@ function downloadBlob(blob, filename) {
   URL.revokeObjectURL(url);
 }
 
+function isDocxName(name) {
+  return /\.docx$/i.test(name || "");
+}
+
+function isSourceName(name) {
+  return /\.(pptx|docx)$/i.test(name || "");
+}
+
+function kindLabel() {
+  return "ファイル";
+}
+
+function extractSummary(next) {
+  if (next && next.unitLabel) return `${next.unitLabel} · ${next.uidCount} 件のテキスト`;
+  return `${next.slideCount} 枚 · ${next.uidCount} 件のテキスト`;
+}
+
+function syncResultLabels() {
+  const heading = document.querySelector("#step4 h2");
+  const button = document.getElementById("downloadPptxBtn");
+  if (heading) heading.textContent = "翻訳済みファイルをダウンロード";
+  if (button) button.textContent = "ファイルをダウンロード";
+}
+
 async function handlePptx(file) {
   if (busy) return;
   clearMessages();
-  if (!file.name.toLowerCase().endsWith(".pptx")) {
-    show(errorMsg, ".pptx を置いてください。");
+  if (!isSourceName(file.name)) {
+    show(errorMsg, "ファイル（.pptx または .docx）を置いてください。");
     return;
   }
   // a new deck means the previous one's extract, translation and result go
   clearDeckState();
   sourceFile = file;
+  sourceKind = isDocxName(file.name) ? "docx" : "pptx";
   try {
     setBusy(true, `${file.name} を読み込み中…`);
     sourceZip = await JSZip.loadAsync(await file.arrayBuffer());
     setProgress("テキストを抽出中…");
-    extracted = await extractTextsFromZip(sourceZip);
-    deckFonts = await collectFontsFromZip(sourceZip);
+    extracted = sourceKind === "docx"
+      ? await extractDocxTexts(sourceZip)
+      : await extractTextsFromZip(sourceZip);
+    deckFonts = sourceKind === "docx"
+      ? await collectDocxFonts(sourceZip)
+      : await collectFontsFromZip(sourceZip);
   } catch (err) {
-    logError("PPTX の抽出", err);
+    logError(`${kindLabel()} の抽出`, err);
     show(errorMsg, `抽出に失敗しました: ${err.message || err}`);
     return;
   } finally {
@@ -243,7 +273,8 @@ async function handlePptx(file) {
 
   pptxMeta.hidden = false;
   pptxMeta.textContent = `${file.name} · ${(file.size / 1024).toFixed(1)} KB`;
-  extractMeta.textContent = `${extracted.slideCount} 枚 · ${extracted.uidCount} 件のテキスト`;
+  extractMeta.textContent = extractSummary(extracted);
+  syncResultLabels();
   promptBox.value = loadStoredPrompt() || defaultPrompt();
   extractBox.value = extracted.text;
   resetFontPickers(deckFonts);
@@ -278,7 +309,7 @@ async function sourceBytes() {
   if (!deckEdited) return sourceFile.arrayBuffer();
   return sourceZip.generateAsync(
     { type: "uint8array", compression: "STORE" },
-    (meta) => setProgress(`PPTX を読み込み中… ${Math.round(meta.percent)}%`)
+    (meta) => setProgress(`${kindLabel()} を読み込み中… ${Math.round(meta.percent)}%`)
   );
 }
 
@@ -286,7 +317,7 @@ async function applyTranslation(source, sourceLabel) {
   if (busy) return;
   clearMessages();
   if (!sourceZip || !extracted) {
-    show(errorMsg, "先に PPTX を置いてください。");
+    show(errorMsg, "先にファイルを置いてください。");
     return;
   }
   let text = String(source || "").replace(/^\uFEFF/, "").trim();
@@ -323,21 +354,23 @@ async function applyTranslation(source, sourceLabel) {
   setStepState(step4, "is-wait");
 
   try {
-    setBusy(true, "PPTX を読み込み中…");
+    setBusy(true, `${kindLabel()} を読み込み中…`);
     const zip = await JSZip.loadAsync(await sourceBytes());
     setProgress("訳文を書き戻し中…");
     const fonts = {
       titleFont: fontFromPicker(titleFontSelect, titleCustomFont),
       bodyFont: fontFromPicker(bodyFontSelect, bodyCustomFont),
     };
-    const result = await injectTextsToZip(zip, translations, extracted.metadata, fonts);
+    const result = sourceKind === "docx"
+      ? await injectDocxTexts(zip, translations, extracted.metadata, fonts)
+      : await injectTextsToZip(zip, translations, extracted.metadata, fonts);
     const blob = await zip.generateAsync(
       {
         type: "blob",
         compression: "DEFLATE",
         compressionOptions: { level: 6 },
       },
-      (meta) => setProgress(`PPTX を生成中… ${Math.round(meta.percent)}%`)
+      (meta) => setProgress(`${kindLabel()} を生成中… ${Math.round(meta.percent)}%`)
     );
     resultBlob = blob;
     resultName = translatedOutputName(sourceFile.name);
@@ -371,7 +404,7 @@ async function applyTranslation(source, sourceLabel) {
       show(okMsg, "書き戻しました。ダウンロードが始まらない場合はボタンを押してください。");
     }
   } catch (err) {
-    logError("PPTX への書き戻し", err);
+    logError(`${kindLabel()} への書き戻し`, err);
     if (mismatchNote) show(warnMsg, mismatchNote);
     show(errorMsg, `書き戻しに失敗しました: ${err.message || err}`);
   } finally {
@@ -387,6 +420,7 @@ function clearDeckState() {
   if (typeof resetImageTools === "function") resetImageTools();
   extracted = null;
   sourceZip = null;
+  sourceKind = "pptx";
   deckEdited = false;
   resultBlob = null;
   resultName = "";
@@ -405,6 +439,7 @@ function clearDeckState() {
   setStepState(step2, "is-wait");
   setStepState(step3, "is-wait");
   setStepState(step4, "is-wait");
+  syncResultLabels();
   clearMessages();
 }
 
@@ -418,7 +453,7 @@ function resetAll() {
   setStepState(step1, "");
 }
 
-bindDrop(pptxDrop, handlePptx, (file) => file.name.toLowerCase().endsWith(".pptx"));
+bindDrop(pptxDrop, handlePptx, (file) => isSourceName(file.name));
 bindDrop(txtDrop, handleTxt, (file) => file.name.toLowerCase().endsWith(".txt"));
 pptxDrop.addEventListener("pick", () => fileInput.click());
 txtDrop.addEventListener("pick", () => txtInput.click());
@@ -458,6 +493,13 @@ bindFontPicker(bodyFontSelect, bodyCustomFont, bodyFontPreview);
 bindImageTools({
   getZip: () => sourceZip,
   markDeckEdited: () => { deckEdited = true; },
+  listPictures: (zip) => (sourceKind === "docx" ? listDocxRasterPictures(zip) : listSlideRasterPictures(zip)),
+  extractTexts: (zip) => (sourceKind === "docx" ? extractDocxTexts(zip) : extractTextsFromZip(zip)),
+  replaceBoxes: (zip, path, prefix, boxes) => (
+    sourceKind === "docx"
+      ? replaceDocxPictureTextBoxes(zip, path, prefix, boxes)
+      : replacePictureTextBoxes(zip, path, prefix, boxes)
+  ),
   isBusy: () => busy,
   setBusy,
   setProgress,
@@ -475,7 +517,7 @@ bindImageTools({
   applyExtract: (next) => {
     extracted = next;
     extractBox.value = next.text;
-    extractMeta.textContent = `${next.slideCount} 枚 · ${next.uidCount} 件のテキスト`;
+    extractMeta.textContent = extractSummary(next);
     resultBlob = null;
     resultName = "";
     resultMeta.textContent = "";

@@ -28,7 +28,7 @@ const STRIP_TAG_RE = /(?:\[\/?\d+\]|⟦\/?\d+⟧)/g;
 // same pattern without /g, so .test() does not carry lastIndex between calls
 const TAG_LIKE_RE = /(?:\[\/?\d+\]|⟦\/?\d+⟧)/;
 
-const TRANSLATION_PROMPT = `あなたはプロのローカライズ翻訳者です。以下のスライド抽出テキストを日本語に翻訳してください。
+const TRANSLATION_PROMPT = `あなたはプロのローカライズ翻訳者です。以下のファイルの抽出テキストを日本語に翻訳してください。
 
 # 厳守するルール
 1. 「uid_0001」のような uid 行は、翻訳・改変・削除・並べ替えをせず、そのまま出力する。
@@ -707,12 +707,13 @@ function validateTranslations(metadata, translations) {
 }
 
 function translatedOutputName(originalName) {
-  const base = String(originalName || "deck").replace(/\.pptx$/i, "");
-  return `${base}_translated.pptx`;
+  const name = String(originalName || "deck");
+  if (/\.docx$/i.test(name)) return name.replace(/\.docx$/i, "_translated.docx");
+  return `${name.replace(/\.pptx$/i, "")}_translated.pptx`;
 }
 
 function extractOutputName(originalName) {
-  const base = String(originalName || "deck").replace(/\.pptx$/i, "");
+  const base = String(originalName || "deck").replace(/\.(pptx|docx)$/i, "");
   return `${base}_to_translate.txt`;
 }
 

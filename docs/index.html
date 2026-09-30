@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>PPT Translation Supporter</title>
+  <title>PPT/DOC Translation Supporter</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js" integrity="sha384-+mbV2IY1Zk/X1p/nWllGySJSUN8uMs+gUAN10Or95UBH0fpj6GfKgPmgC5EXieXG" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js" crossorigin="anonymous"></script>
@@ -406,16 +406,16 @@
 </head>
 <body>
   <main>
-    <h1>PPT Translation Supporter</h1>
-    <p class="lede">ブラウザ内で PowerPoint のテキストを抽出し、翻訳文を書き戻します。<strong>翻訳自体はこのツールでは行いません。</strong>抽出したプロンプトと本文を ChatGPT や Claude などの LLM に渡し、返ってきた訳文をこのツールで書き戻してください。ファイルはサーバに送られません。デッキ全体のフォント統一は <a href="https://symmr.github.io/ppt-finalizer/" target="_blank" rel="noopener noreferrer">PPT Finalizer</a> で行います。</p>
+    <h1>PPT/DOC Translation Supporter</h1>
+    <p class="lede">ブラウザ内で PowerPoint（.pptx）または Word（.docx）のテキストを抽出し、翻訳文を書き戻します。<strong>翻訳自体はこのツールでは行いません。</strong>抽出したプロンプトと本文を ChatGPT や Claude などの LLM に渡し、返ってきた訳文をこのツールで書き戻してください。ファイルはサーバに送られません。</p>
 
     <section class="step" id="step1">
       <div class="step-head">
         <span class="step-num">1</span>
-        <h2>PPTX を置く</h2>
+        <h2>ファイルを置く</h2>
       </div>
       <div class="dropzone" id="pptxDrop" tabindex="0" role="button">
-        <strong>ここに .pptx をドロップ</strong>
+        <strong>ここにファイルをドロップ</strong>
         <p>またはクリックして選択</p>
       </div>
       <p class="meta" id="pptxMeta" hidden></p>
@@ -510,7 +510,7 @@
         <span class="step-num">3</span>
         <h2>翻訳したテキストを渡す</h2>
       </div>
-      <p class="meta">書き戻すときにフォントを指定できます。既定は Noto Sans JP です。元の PPTX のフォントをそのまま使う場合は「指定しない」を選んでください。指定したフォントは訳文を書き戻した箇所にだけ適用されます（デッキ全体の統一は <a href="https://symmr.github.io/ppt-finalizer/" target="_blank" rel="noopener noreferrer">PPT Finalizer</a> で行います）。「タイトル」はタイトルプレースホルダー（title / ctrTitle / subTitle）の図形が対象です。テキストボックスだけで作られたスライドにはタイトルの区別がないため、すべて本文として扱われます。</p>
+      <p class="meta">書き戻すときにフォントを指定できます。既定は Noto Sans JP です。元のファイルのフォントをそのまま使う場合は「指定しない」を選んでください。</p>
       <div class="opt-row">
         <div class="opt">
           <label for="titleFontSelect">タイトル</label>
@@ -545,16 +545,16 @@
     <section class="step is-wait" id="step4" hidden>
       <div class="step-head">
         <span class="step-num">4</span>
-        <h2>翻訳済み PPTX をダウンロード</h2>
+        <h2>翻訳済みファイルをダウンロード</h2>
       </div>
       <p class="meta" id="resultMeta"></p>
       <div class="row">
-        <button type="button" class="primary" id="downloadPptxBtn">PPTX をダウンロード</button>
+        <button type="button" class="primary" id="downloadPptxBtn">ファイルをダウンロード</button>
         <button type="button" id="resetBtn">最初からやり直す</button>
       </div>
     </section>
 
-    <input id="fileInput" type="file" accept=".pptx,application/vnd.openxmlformats-officedocument.presentationml.presentation">
+    <input id="fileInput" type="file" accept=".pptx,.docx,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.openxmlformats-officedocument.wordprocessingml.document">
     <input id="txtInput" type="file" accept=".txt,text/plain">
 
     <p class="disclaimer">
@@ -581,7 +581,7 @@
           if (data.version) version = data.version;
         }
       } catch (_) {}
-      for (const file of ["pptx-text.js", "image-text.js", "image-panel.js", "app.js"]) {
+      for (const file of ["pptx-text.js", "docx-text.js", "image-text.js", "image-panel.js", "app.js"]) {
         await new Promise((resolve, reject) => {
           const script = document.createElement("script");
           script.src = `${file}?v=${encodeURIComponent(version)}`;
