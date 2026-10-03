@@ -4,10 +4,13 @@
   "version": "1.0.0",
   "description": "Browser extract/inject for PowerPoint translation (PPT Translation Supporter)",
   "scripts": {
-    "test": "node --test test/pptx-text.test.js test/image-text.test.js test/docx-text.test.js"
+    "test": "node --test test/pptx-text.test.js test/image-text.test.js test/docx-text.test.js test/pdf-text.test.js test/pdf-rewrite.test.js"
   },
   "devDependencies": {
+    "@pdf-lib/fontkit": "^1.1.1",
     "@xmldom/xmldom": "^0.8.10",
-    "jszip": "^3.10.1"
+    "jszip": "^3.10.1",
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^4.10.38"
   }
 }

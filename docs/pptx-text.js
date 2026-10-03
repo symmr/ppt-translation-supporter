@@ -713,7 +713,7 @@ function translatedOutputName(originalName) {
 }
 
 function extractOutputName(originalName) {
-  const base = String(originalName || "deck").replace(/\.(pptx|docx)$/i, "");
+  const base = String(originalName || "deck").replace(/\.(pptx|docx|pdf)$/i, "");
   return `${base}_to_translate.txt`;
 }
 
