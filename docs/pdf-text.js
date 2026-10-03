@@ -35,9 +35,11 @@ function isCjk(ch) {
   return CJK_RE.test(ch || "");
 }
 
-// A block's text is kept as runs: { text, style } where style is a key for
-// "same color, same link". Blocks with more than one run are tagged like
-// PPTX paragraphs ([0]...[/0]) so the translation can keep the colors.
+// A block's text is kept as runs: { text, style }. style is one shared
+// { color, link, bold } object per combination, so runs compare by identity.
+// Blocks with more than one run are tagged like PPTX paragraphs ([0]...[/0])
+// so the translation can keep the colors.
+const PLAIN = Object.freeze({ color: null, link: null, bold: false });
 function runsText(runs) {
   return runs.map((r) => r.text).join("");
 }
@@ -56,15 +58,13 @@ function lastChar(runs) {
 
 // How "styled" a run is: a link outranks a color or weight, those outrank plain.
 function styleWeight(style) {
-  const [color, link, bold] = String(style || "").split("|");
-  return (link ? 2 : 0) + (color && color !== "000000" ? 1 : 0) + (bold ? 1 : 0);
+  return (style.link ? 2 : 0) + (style.color && style.color !== "000000" ? 1 : 0) + (style.bold ? 1 : 0);
 }
 
 // A space between two runs goes to the plainer one, so "manual" is the link
 // and not "manual ".
 function spaceStyle(before, after) {
-  if (after === undefined) return before;
-  return styleWeight(after) < styleWeight(before) ? after : before;
+  return after && styleWeight(after) < styleWeight(before) ? after : before;
 }
 
 function joinPieces(runs, pieces, spaced) {
@@ -153,7 +153,7 @@ function itemsToLines(items, styles, styler) {
       const near = gap > -0.5 * line.size && gap < 1.5 * Math.max(size, line.size);
       if (!sameBaseline || !near) close();
     }
-    const pieces = styler ? styler(item, x, y, size) : [{ text: str, style: "" }];
+    const pieces = styler ? styler(item, x, y, size) : [{ text: str, style: PLAIN }];
     if (!pieces) continue;
     const firstFont = pieces.firstFont || item.fontName || "";
     const lastFont = pieces.lastFont || item.fontName || "";
@@ -251,78 +251,56 @@ function median(values) {
 }
 
 // Style of each character of a pdf.js item, from the strings the content
-// stream shows there (fill color) and the link annotations over it.
-// segments: from collectTextSegments; links: [{ rect, url, dest }].
-function makeStyler(segments, links, styleTable) {
-  const keyOf = (color, link, bold) => {
-    const key = `${color || ""}|${link < 0 ? "" : link}|${bold ? "b" : ""}`;
-    if (!styleTable.has(key)) {
-      styleTable.set(key, { color: color || null, link: link < 0 ? null : links[link], bold: Boolean(bold) });
-    }
-    return key;
+// stream shows there (fill color, font) and the link annotations over it.
+// segments: from collectTextSegments; links: [{ rect, url }].
+function makeStyler(segments, links) {
+  const styles = new Map();
+  const styleOf = (color, link, bold) => {
+    const key = `${color}|${link}|${bold}`;
+    if (!styles.has(key)) styles.set(key, { color: color || null, link: links[link] || null, bold });
+    return styles.get(key);
   };
   return (item, x, y, size) => {
     const chars = Array.from(String(item.str));
     const width = item.width || 0;
+    const charX = (i) => x + ((i + 0.5) / chars.length) * width;
     const nearby = segments.filter((s) => Math.abs(s.y0 - y) < 0.35 * size);
-    const onLine = nearby.filter((s) => s.visible !== false);
+    const onLine = nearby.filter((s) => s.visible);
     // transparent or invisible text (alt text, OCR layers) is not extracted
     if (!onLine.some((s) => s.x1 > x && s.x0 < x + width) &&
-      nearby.some((s) => s.visible === false && s.x0 >= x - 0.5 && s.x0 < x + width)) return null;
+      nearby.some((s) => !s.visible && s.x0 >= x - 0.5 && s.x0 < x + width)) return null;
     // strings that start inside the item; else the one drawn over its middle
     let segs = onLine.filter((s) => s.x0 >= x - 0.5 && s.x0 < x + width - 0.05);
-    if (!segs.length) {
-      const mid = x + width / 2;
-      segs = onLine.filter((s) => s.x0 <= mid && s.x1 >= mid).slice(-1);
-    }
+    if (!segs.length) segs = onLine.filter((s) => s.x0 <= x + width / 2 && s.x1 >= x + width / 2).slice(-1);
     segs.sort((p, q) => p.x0 - q.x0);
-    const colors = new Array(chars.length).fill(null);
-    const fonts = new Array(chars.length).fill("");
-    const total = segs.reduce((n, s) => n + s.count, 0);
-    let exact = false;
-    if (segs.length && total === chars.length) {
-      let i = 0;
-      for (const seg of segs) for (let k = 0; k < seg.count; k += 1) { fonts[i] = seg.font || ""; colors[i++] = seg.color; }
-      exact = true;
-    } else if (segs.length) {
-      chars.forEach((_, i) => {
-        const cx = x + ((i + 0.5) / chars.length) * width;
-        let best = segs[0];
-        let bestDist = Infinity;
-        for (const seg of segs) {
-          const dist = cx < seg.x0 ? seg.x0 - cx : cx > seg.x1 ? cx - seg.x1 : 0;
-          if (dist < bestDist) { best = seg; bestDist = dist; }
-        }
-        colors[i] = best.color;
-        fonts[i] = best.font || "";
-      });
-    }
-    const linkOf = chars.map((_, i) => {
-      const cx = x + ((i + 0.5) / Math.max(1, chars.length)) * width;
-      const cy = y + size * 0.3;
-      return links.findIndex(({ rect }) => cx >= Math.min(rect[0], rect[2]) && cx <= Math.max(rect[0], rect[2]) &&
+    // one string per character when the glyph counts add up, else the
+    // string nearest to where the character sits
+    const perChar = segs.reduce((n, s) => n + s.count, 0) === chars.length
+      ? segs.flatMap((s) => new Array(s.count).fill(s))
+      : chars.map((_, i) => segs.reduce((best, s) => {
+        const dist = (seg) => Math.max(seg.x0 - charX(i), charX(i) - seg.x1, 0);
+        return !best || dist(s) < dist(best) ? s : best;
+      }, null));
+    const cy = y + size * 0.3;
+    const styleAt = chars.map((_, i) => {
+      const seg = perChar[i];
+      const link = links.findIndex(({ rect }) => charX(i) >= Math.min(rect[0], rect[2]) && charX(i) <= Math.max(rect[0], rect[2]) &&
         cy >= Math.min(rect[1], rect[3]) - 1 && cy <= Math.max(rect[1], rect[3]) + 1);
+      return styleOf(seg ? seg.color : null, link, Boolean(seg && BOLD_FONT_RE.test(seg.font)));
     });
-    const keys = chars.map((_, i) => keyOf(colors[i], linkOf[i], BOLD_FONT_RE.test(fonts[i])));
     // Positions estimated from widths can land a character off; styled spans
     // nearly always start and end at a space, so snap boundaries to one.
-    if (!exact || links.length) {
-      for (let b = 1; b < keys.length; b += 1) {
-        if (keys[b] === keys[b - 1] || chars[b] === " " || chars[b - 1] === " ") continue;
-        for (const d of [1, -1, 2, -2]) {
-          const k = b + d;
-          if (k <= 0 || k >= keys.length) continue;
-          if (chars[k] !== " " && chars[k - 1] !== " ") continue;
-          if (k < b) for (let i = k; i < b; i += 1) keys[i] = keys[b];
-          else for (let i = b; i < k; i += 1) keys[i] = keys[b - 1];
-          break;
-        }
-      }
+    for (let b = 1; b < styleAt.length; b += 1) {
+      if (styleAt[b] === styleAt[b - 1] || chars[b] === " " || chars[b - 1] === " ") continue;
+      const k = [b + 1, b - 1, b + 2, b - 2].find((j) => j > 0 && j < chars.length && (chars[j] === " " || chars[j - 1] === " "));
+      if (k === undefined) continue;
+      if (k < b) styleAt.fill(styleAt[b], k, b);
+      else styleAt.fill(styleAt[b - 1], b, k);
     }
     const pieces = [];
-    chars.forEach((ch, i) => pushRun(pieces, ch, keys[i]));
-    pieces.firstFont = fonts[0] || "";
-    pieces.lastFont = fonts[fonts.length - 1] || "";
+    chars.forEach((ch, i) => pushRun(pieces, ch, styleAt[i]));
+    pieces.firstFont = (perChar[0] && perChar[0].font) || "";
+    pieces.lastFont = (perChar[perChar.length - 1] && perChar[perChar.length - 1].font) || "";
     return pieces;
   };
 }
@@ -363,8 +341,7 @@ async function extractPdfTexts(pdf, onPage, options) {
     } catch (_) {
       links = [];
     }
-    const styleTable = new Map();
-    const styler = segments.length || links.length ? makeStyler(segments, links, styleTable) : null;
+    const styler = segments.length || links.length ? makeStyler(segments, links) : null;
     for (const block of linesToBlocks(itemsToLines(content.items, content.styles, styler))) {
       // bullets, "1.", "a." and the like stay as they are
       if (isMarkerOnly(block.text)) continue;
@@ -385,7 +362,7 @@ async function extractPdfTexts(pdf, onPage, options) {
         lines: block.lineCount,
         firstBaseline: round2(block.firstY),
         text: block.text,
-        runs: block.runs.map((r) => ({ text: r.text, ...(styleTable.get(r.style) || { color: null, link: null, bold: false }) })),
+        runs: block.runs.map((r) => ({ text: r.text, ...r.style })),
         title: false,
       });
     }
@@ -409,7 +386,7 @@ async function extractPdfTexts(pdf, onPage, options) {
 // the block's runs one to one keep the styles; anything else is flattened
 // into the run with the most text.
 function styledText(meta, translated) {
-  const runs = meta.runs && meta.runs.length ? meta.runs : [{ text: meta.text, color: null, link: null }];
+  const runs = meta.runs && meta.runs.length ? meta.runs : [{ text: meta.text, ...PLAIN }];
   const raw = String(translated).replace(/\s+$/, "");
   if (runs.length <= 1) {
     return { text: raw, styles: new Array(raw.length).fill(0), flattened: false, tagArtifact: TAG_LIKE_RE.test(raw) };
@@ -461,85 +438,125 @@ function wrapUnits(text, offset) {
   return units;
 }
 
-// Line breaks as [{ start, end }] offsets into text, trailing spaces left out.
-function wrapRanges(text, maxWidth, measure) {
-  const out = [];
+// Paragraphs as wrap units with their widths, measured once: width with
+// trailing spaces (w) and without (wt). measure(str, offset) may be called
+// at any one size, as text width scales linearly with the font size.
+function measureUnits(text, measure) {
   const src = String(text);
-  const trimEnd = (start, end) => {
-    while (end > start && /\s/.test(src[end - 1])) end -= 1;
-    return end;
-  };
+  const paras = [];
   let offset = 0;
   for (const para of src.split("\n")) {
-    const body = para.replace(/\r$/, "");
-    let start = offset;
-    let end = offset;
-    for (const unit of wrapUnits(body, offset)) {
-      if (end === start || measure(src.slice(start, trimEnd(start, unit.end)), start) <= maxWidth) {
+    const units = wrapUnits(para.replace(/\r$/, ""), offset).map((u) => {
+      const trimmed = src.slice(u.start, u.end).replace(/\s+$/, "");
+      return { ...u, w: measure(src.slice(u.start, u.end), u.start), wt: measure(trimmed, u.start), tend: u.start + trimmed.length };
+    });
+    paras.push({ start: offset, units });
+    offset += para.length + 1;
+  }
+  return paras;
+}
+
+// Line breaks as [{ start, end }] offsets into text, trailing spaces left
+// out. measured: from measureUnits; widths there times scale are compared
+// with maxWidth. Touching the edge counts as fitting (0.01pt), so rounding
+// cannot tip an exact fit.
+function layoutUnits(text, measured, maxWidth, measure, scale) {
+  const k = scale || 1;
+  const edge = maxWidth + 0.01;
+  const src = String(text);
+  const out = [];
+  for (const { start: paraStart, units } of measured) {
+    let start = paraStart;
+    let end = paraStart;
+    let used = 0; // width of the units on this line, trailing spaces included
+    let lastTrimEnd = paraStart;
+    for (const unit of units) {
+      if (end === start || (used + unit.wt) * k <= edge) {
+        used += unit.w;
         end = unit.end;
+        lastTrimEnd = unit.tend > unit.start ? unit.tend : lastTrimEnd;
         continue;
       }
-      out.push({ start, end: trimEnd(start, end) });
+      out.push({ start, end: Math.max(start, lastTrimEnd) });
+      // the line starts on this unit, without its leading spaces
       start = unit.start;
       while (start < unit.end && /\s/.test(src[start])) start += 1;
       end = unit.end;
+      lastTrimEnd = unit.tend;
+      used = start === unit.start ? unit.w : measure(src.slice(start, unit.end), start);
       // a single unit wider than the box: split it by character
-      while (end - start > 1 && measure(src.slice(start, end), start) > maxWidth) {
+      while (end - start > 1 && measure(src.slice(start, unit.tend), start) * k > edge) {
         let cut = end - 1;
-        while (cut > start + 1 && measure(src.slice(start, cut), start) > maxWidth) cut -= 1;
+        while (cut > start + 1 && measure(src.slice(start, cut), start) * k > edge) cut -= 1;
         out.push({ start, end: cut });
         start = cut;
+        used = measure(src.slice(start, end), start);
       }
     }
-    out.push({ start, end: trimEnd(start, end) });
-    offset += para.length + 1;
+    out.push({ start, end: Math.max(start, lastTrimEnd) });
   }
   return out;
+}
+
+// Line breaks as [{ start, end }] offsets into text, trailing spaces left out.
+function wrapRanges(text, maxWidth, measure) {
+  return layoutUnits(text, measureUnits(text, measure), maxWidth, measure);
 }
 
 function wrapText(text, maxWidth, measure) {
   return wrapRanges(text, maxWidth, measure).map((r) => String(text).slice(r.start, r.end));
 }
 
-function fitWithin(text, block, measure, width) {
+// Wraps at width, shrinking the size in 2.5% steps down to MIN_SHRINK until
+// the lines fit the block's height (shrink=false: original size only).
+// measure(text, offset) is the width at size 1.
+function fitWithin(text, block, measured, measure1, width, shrink) {
   const lineHeight = (size) => (block.leading > 0 ? block.leading * (size / block.size) : size * 1.2);
   const limit = block.h * 1.05 + 0.5;
-  let size = block.size;
-  let ranges = wrapRanges(text, width, (s, start) => measure(s, size, start));
-  for (let step = 1; step <= 20; step += 1) {
-    if (size + (ranges.length - 1) * lineHeight(size) <= limit) break;
-    const next = block.size * (1 - step * ((1 - MIN_SHRINK) / 20));
-    if (next < block.size * MIN_SHRINK - 1e-9) break;
-    size = next;
-    ranges = wrapRanges(text, width, (s, start) => measure(s, size, start));
+  const steps = shrink ? 20 : 0;
+  let fit;
+  for (let step = 0; step <= steps; step += 1) {
+    const size = (block.size * (40 - step)) / 40;
+    const ranges = layoutUnits(text, measured, width, measure1, size);
+    const overflow = size + (ranges.length - 1) * lineHeight(size) > limit;
+    fit = { size, lineHeight: lineHeight(size), ranges, width, overflow };
+    if (!overflow) break;
   }
-  const overflow = size + (ranges.length - 1) * lineHeight(size) > limit;
-  const lines = ranges.map((r) => String(text).slice(r.start, r.end));
-  return { size, lineHeight: lineHeight(size), lines, ranges, width, overflow };
+  fit.lines = fit.ranges.map((r) => String(text).slice(r.start, r.end));
+  return fit;
 }
 
-// Largest size (down to half the original) at which the wrapped text fits
-// the block's box. When even that overflows, the text may run to maxWidth
-// (the page's right margin) rather than stack up in a narrow column.
-// measure(text, size) returns the width in points.
+// Picks the width and size for a block's translation. In order: a widened
+// one-line block (headings, labels) at its original size, the block's own
+// width shrinking down to half size, then the full width to the page margin.
+// If none fits, the candidate with the fewest lines wins.
+// measure(text, size, offset) returns the width in points.
 function fitBlock(text, block, measure, maxWidth, growWidth) {
-  // one-line blocks (headings, labels) widen into free space before shrinking
-  if (growWidth > block.w) {
-    const grown = fitWithin(text, block, measure, growWidth);
-    if (!grown.overflow && grown.size >= block.size - 1e-9) return grown;
+  const measure1 = (str, offset) => measure(str, 1, offset);
+  const measured = measureUnits(text, measure1);
+  const base = Math.max(block.w, block.size);
+  const candidates = [];
+  if (growWidth > block.w) candidates.push({ width: growWidth, shrink: false });
+  candidates.push({ width: base, shrink: true });
+  if (maxWidth > base) candidates.push({ width: maxWidth, shrink: true });
+  let best = null;
+  for (const { width, shrink } of candidates) {
+    const fit = fitWithin(text, block, measured, measure1, width, shrink);
+    if (!fit.overflow) return fit;
+    if (shrink && (!best || fit.lines.length < best.lines.length)) best = fit;
   }
-  const fit = fitWithin(text, block, measure, Math.max(block.w, block.size));
-  if (!fit.overflow || !(maxWidth > fit.width)) return fit;
-  const wide = fitWithin(text, block, measure, maxWidth);
-  return wide.lines.length < fit.lines.length || !wide.overflow ? wide : fit;
+  return best;
 }
 
 // @pdf-lib/fontkit writes a short-format loca table for small subsets but
 // does not pad glyphs to an even length, so every glyph after an odd-length
 // one points at the wrong bytes and renders blank. Padding fixes the offsets.
+const patchedFontkits = new WeakSet();
+
 function patchFontkitSubset(fontkit, fontBytes) {
-  const subset = fontkit.create(fontBytes).createSubset();
-  const proto = Object.getPrototypeOf(subset);
+  if (patchedFontkits.has(fontkit)) return;
+  patchedFontkits.add(fontkit);
+  const proto = Object.getPrototypeOf(fontkit.create(fontBytes).createSubset());
   if (!proto || typeof proto._addGlyph !== "function" || proto._addGlyphEvenPadded) return;
   const addGlyph = proto._addGlyph;
   proto._addGlyph = function addEvenGlyph(gid) {
@@ -569,18 +586,24 @@ const GLYPH_SUBSTITUTES = {
   "\uF06E": "■", "\uF06F": "□", "\uF071": "□", "\uF076": "◆",
 };
 
-function substituteGlyphs(text, fonts) {
-  const sets = fonts.map((f) => {
-    try { return new Set(f.getCharacterSet()); } catch (_) { return null; }
-  });
-  if (sets.some((set) => !set)) return text;
-  const has = (ch) => sets.every((set) => set.has(ch.codePointAt(0)));
-  let out = "";
-  for (const ch of text) {
-    const sub = GLYPH_SUBSTITUTES[ch];
-    out += sub && !has(ch) && has(sub) ? sub : ch;
+// Returns text => text with look-alikes for symbols some of the fonts lack.
+// The character sets are read once per document.
+function glyphSubstituter(fonts) {
+  let sets;
+  try {
+    sets = fonts.map((f) => new Set(f.getCharacterSet()));
+  } catch (_) {
+    return (text) => text;
   }
-  return out;
+  const has = (ch) => sets.every((set) => set.has(ch.codePointAt(0)));
+  return (text) => {
+    let out = "";
+    for (const ch of text) {
+      const sub = GLYPH_SUBSTITUTES[ch];
+      out += sub && !has(ch) && has(sub) ? sub : ch;
+    }
+    return out;
+  };
 }
 
 function hexToRgb(PDFLib, hex, fallback) {
@@ -591,10 +614,10 @@ function hexToRgb(PDFLib, hex, fallback) {
 
 // How wide a one-line block may grow: up to the next text block to its
 // right on the same lines, the page margin, and 1.8 times its own width.
-function freeWidth(meta, metadata, maxWidth) {
+function freeWidth(meta, pageBlocks, maxWidth) {
   let limit = Math.min(maxWidth, meta.w * 1.8);
-  for (const other of metadata) {
-    if (other === meta || other.page !== meta.page) continue;
+  for (const other of pageBlocks) {
+    if (other === meta) continue;
     const overlapsY = other.y < meta.y + meta.h && other.y + other.h > meta.y;
     if (overlapsY && other.x >= meta.x + meta.w - 1) limit = Math.min(limit, other.x - meta.x - meta.size * 0.5);
   }
@@ -602,7 +625,7 @@ function freeWidth(meta, metadata, maxWidth) {
 }
 
 function sameRect(a, b) {
-  return a && b && a.length === 4 && b.length === 4 && a.every((v, i) => Math.abs(v - b[i]) < 0.6);
+  return a.every((v, i) => Math.abs(v - b[i]) < 0.6);
 }
 
 // Link annotations of a page, as { index, dict, rect }.
@@ -625,22 +648,21 @@ function pageLinkAnnots(PDFLib, page) {
   return out;
 }
 
-// Moves a link: the original annotation goes, a copy goes on every piece of
-// translated text that carries the link.
+// Moves links: each original annotation goes, and a copy goes on every
+// piece of translated text that carries it. moves: Map(link => rects).
 function relinkAnnotations(PDFLib, page, moves) {
   const { PDFName, PDFArray } = PDFLib;
-  if (!moves.length) return;
   const context = page.doc.context;
   const annots = page.node.lookupMaybe(PDFName.of("Annots"), PDFArray);
   if (!annots) return;
   const existing = pageLinkAnnots(PDFLib, page);
   const drop = new Set();
   const added = [];
-  for (const move of moves) {
-    const found = existing.find((a) => sameRect(a.rect, move.rect));
+  for (const [link, rects] of moves) {
+    const found = existing.find((a) => sameRect(a.rect, link.rect));
     if (!found) continue;
     drop.add(found.index);
-    for (const r of move.rects) {
+    for (const r of rects) {
       const copy = found.dict.clone(context);
       copy.set(PDFName.of("Rect"), context.obj([r.x0, r.y0, r.x1, r.y1].map(round2)));
       copy.delete(PDFName.of("QuadPoints"));
@@ -680,6 +702,7 @@ async function injectPdfTexts(bytes, translations, metadata, deps) {
     boldFont = await doc.embedFont(PDFLib.StandardFonts.HelveticaBold);
   }
   const fontFor = (run) => (run && run.bold && boldFont ? boldFont : font);
+  const substitute = glyphSubstituter(boldFont ? [font, boldFont] : [font]);
   const pages = doc.getPages();
   const colors = deps.colors || {};
   let injected = 0;
@@ -694,7 +717,7 @@ async function injectPdfTexts(bytes, translations, metadata, deps) {
       continue;
     }
     const styled = styledText(meta, translations[meta.id]);
-    styled.text = substituteGlyphs(styled.text, boldFont ? [font, boldFont] : [font]);
+    styled.text = substitute(styled.text);
     if (styled.flattened) flattened.push(meta.id);
     if (styled.tagArtifact) tagArtifacts.push(meta.id);
     targets.push({ meta, styled });
@@ -702,30 +725,24 @@ async function injectPdfTexts(bytes, translations, metadata, deps) {
   // Take the original text (and the underlines of links that move) out of
   // each page first; pdf-lib's own drawing is appended afterwards.
   const removed = new Set();
-  const underlined = new Set();
+  const underlined = new Set(); // links whose underline was taken out
   const sharedForms = new Map();
-  const byPage = new Map();
-  for (const target of targets) {
-    if (!byPage.has(target.meta.page)) byPage.set(target.meta.page, []);
-    byPage.get(target.meta.page).push(target);
-  }
+  const byPage = groupBy(targets, (t) => t.meta.page);
   for (const [index, list] of byPage) {
-    const zones = [];
-    for (const { meta, styled } of list) {
-      if (styled.flattened) continue;
-      for (const run of meta.runs || []) {
-        if (run.link && !zones.some((z) => sameRect(z.rect, run.link.rect))) {
-          const [x0, y0, x1, y1] = run.link.rect;
-          zones.push({ rect: run.link.rect, x0: Math.min(x0, x1), y0: Math.min(y0, y1), x1: Math.max(x0, x1), y1: Math.max(y0, y1) });
-        }
-      }
-    }
+    // links that move with a styled translation lose their old underline
+    const links = [...new Set(list.flatMap(({ meta, styled }) => (
+      styled.flattened ? [] : (meta.runs || []).map((r) => r.link).filter(Boolean)
+    )))];
+    const zones = links.map(({ rect: [x0, y0, x1, y1] }) => ({
+      x0: Math.min(x0, x1), y0: Math.min(y0, y1), x1: Math.max(x0, x1), y1: Math.max(y0, y1),
+    }));
     const result = rewrite.removePageText(PDFLib, pages[index], list.map((t) => t.meta), zones, sharedForms);
     for (const id of result.done) removed.add(id);
-    result.underlined.forEach((k) => underlined.add(`${index}:${zones[k].rect.join(",")}`));
+    for (const k of result.underlined) underlined.add(links[k]);
   }
+  const blocksByPage = groupBy(metadata || [], (m) => m.page);
   const covered = [];
-  const moves = new Map();
+  const moves = new Map(); // page => Map(link => rects)
   for (const { meta, styled } of targets) {
     const page = pages[meta.page];
     const color = colors[meta.id] || {};
@@ -744,7 +761,7 @@ async function injectPdfTexts(bytes, translations, metadata, deps) {
     const box = page.getMediaBox();
     const maxWidth = box.x + box.width - meta.x - Math.min(36, box.width * 0.05);
     // with a rendered page, growth also stops where the background changes
-    let growWidth = meta.lines === 1 ? freeWidth(meta, metadata, maxWidth) : 0;
+    let growWidth = meta.lines === 1 ? freeWidth(meta, blocksByPage.get(meta.page), maxWidth) : 0;
     if (typeof color.room === "number") growWidth = Math.min(growWidth, meta.w + Math.max(0, color.room - meta.size * 0.3));
     // measure with each character's own font (bold runs are wider)
     const measure = (str, size, offset) => {
@@ -780,10 +797,11 @@ async function injectPdfTexts(bytes, translations, metadata, deps) {
         const ink = hexToRgb(PDFLib, run.color, fallbackInk);
         if (piece.trim()) page.drawText(piece, { x, y: baseline, size: fit.size, font: pieceFont, color: ink });
         if (run.link && !styled.flattened && piece.trim()) {
-          const key = `${meta.page}:${run.link.rect.join(",")}`;
-          if (!moves.has(key)) moves.set(key, { page: meta.page, rect: run.link.rect, rects: [] });
-          moves.get(key).rects.push({ x0: x, y0: baseline - fit.size * 0.25, x1: x + width, y1: baseline + fit.size * 0.9 });
-          if (underlined.has(key)) {
+          if (!moves.has(meta.page)) moves.set(meta.page, new Map());
+          const pageMoves = moves.get(meta.page);
+          if (!pageMoves.has(run.link)) pageMoves.set(run.link, []);
+          pageMoves.get(run.link).push({ x0: x, y0: baseline - fit.size * 0.25, x1: x + width, y1: baseline + fit.size * 0.9 });
+          if (underlined.has(run.link)) {
             page.drawRectangle({
               x,
               y: baseline - fit.size * 0.12,
@@ -800,12 +818,7 @@ async function injectPdfTexts(bytes, translations, metadata, deps) {
     }
     injected += 1;
   }
-  const movesByPage = new Map();
-  for (const move of moves.values()) {
-    if (!movesByPage.has(move.page)) movesByPage.set(move.page, []);
-    movesByPage.get(move.page).push(move);
-  }
-  for (const [index, list] of movesByPage) relinkAnnotations(PDFLib, pages[index], list);
+  for (const [index, pageMoves] of moves) relinkAnnotations(PDFLib, pages[index], pageMoves);
   const out = await doc.save();
   return { bytes: out, injected, missing, flattened, tagArtifacts, overflowed, covered };
 }
@@ -822,6 +835,16 @@ function dominantColor(pixels, channel) {
   let best = [];
   for (const members of bins.values()) if (members.length > best.length) best = members;
   return [0, 1, 2].map((i) => channel(best, i));
+}
+
+function groupBy(items, keyOf) {
+  const groups = new Map();
+  for (const item of items) {
+    const key = keyOf(item);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(item);
+  }
+  return groups;
 }
 
 // Background and text colors of each block, from a rendered page.
@@ -879,11 +902,7 @@ function freeRoomRight(image, rect, fillHex) {
 
 // Browser only: renders each page that has blocks and samples their colors.
 async function samplePdfColors(pdf, metadata, onPage) {
-  const byPage = new Map();
-  for (const meta of metadata) {
-    if (!byPage.has(meta.page)) byPage.set(meta.page, []);
-    byPage.get(meta.page).push(meta);
-  }
+  const byPage = groupBy(metadata, (m) => m.page);
   const colors = {};
   let done = 0;
   for (const [index, metas] of byPage) {
