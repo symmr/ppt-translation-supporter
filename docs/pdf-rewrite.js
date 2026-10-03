@@ -638,52 +638,59 @@ function pageContentBytes(PDFLib, page) {
 }
 
 // Resolves form XObjects for walkContent. shared (one Map per document)
-// keeps each form's original content, so a header form drawn on every page
-// is judged against the same bytes and rewritten once, in place, at its own
-// reference. write=false only reads.
+// keeps each form, read once: its original content (so a header form drawn
+// on every page is judged against the same bytes and rewritten once, in
+// place, at its own reference), its fonts and its matrix. write=false only
+// reads.
 function formResolver(PDFLib, context, resources, shared, write) {
-  const { PDFName, PDFDict, PDFArray, PDFRawStream, PDFNumber } = PDFLib;
+  const { PDFName, PDFDict, PDFArray, PDFRawStream, PDFNumber, PDFRef } = PDFLib;
+  const xobjects = resources && resources.lookupMaybe(PDFName.of("XObject"), PDFDict);
   return (name) => {
-    const xobjects = resources && resources.lookupMaybe(PDFName.of("XObject"), PDFDict);
     const ref = xobjects && xobjects.get(PDFName.of(name));
-    const stream = ref && context.lookup(ref);
-    if (!(stream instanceof PDFRawStream)) return null;
-    if (stream.dict.lookup(PDFName.of("Subtype")) !== PDFName.of("Form")) return null;
-    const key = ref instanceof PDFLib.PDFRef ? ref.toString() : null;
-    let entry = key ? shared.get(key) : null;
-    if (!entry) {
-      let bytes;
-      try {
-        bytes = PDFLib.decodePDFRawStream(stream).decode();
-      } catch (_) {
-        return null;
-      }
-      entry = { bytes, written: false };
-      if (key) shared.set(key, entry);
-    }
-    const formResources = stream.dict.lookupMaybe(PDFName.of("Resources"), PDFDict) || resources;
-    const m = stream.dict.lookupMaybe(PDFName.of("Matrix"), PDFArray);
-    const matrix = m && m.size() === 6
-      ? [0, 1, 2, 3, 4, 5].map((k) => { const v = m.lookup(k); return v instanceof PDFNumber ? v.asNumber() : 0; })
-      : IDENTITY.slice();
+    if (!(ref instanceof PDFRef)) return null;
+    const key = ref.toString();
+    if (!shared.has(key)) shared.set(key, readForm(ref));
+    const form = shared.get(key);
+    if (!form) return null;
     return {
-      bytes: entry.bytes,
-      fonts: resourceFonts(PDFLib, context, formResources),
-      gstates: resourceGStates(PDFLib, context, formResources),
-      matrix,
-      nested: formResolver(PDFLib, context, formResources, shared, write),
+      ...form,
+      // a form without its own resources uses the resources it is drawn with
+      fonts: form.fonts || resourceFonts(PDFLib, context, resources),
+      gstates: form.gstates || resourceGStates(PDFLib, context, resources),
+      nested: form.nested || formResolver(PDFLib, context, resources, shared, write),
       finish: (result) => {
-        if (!write || entry.written || !result.removed || !(ref instanceof PDFLib.PDFRef)) return;
+        if (!write || form.written || !result.removed) return;
         const dict = {};
-        for (const [k, v] of stream.dict.entries()) {
-          const keyName = k.decodeText();
-          if (keyName !== "Filter" && keyName !== "DecodeParms" && keyName !== "Length") dict[keyName] = v;
+        for (const [k, v] of form.stream.dict.entries()) {
+          if (!["Filter", "DecodeParms", "Length"].includes(k.decodeText())) dict[k.decodeText()] = v;
         }
         context.assign(ref, context.flateStream(result.bytes, dict));
-        entry.written = true;
+        form.written = true;
       },
     };
   };
+
+  function readForm(ref) {
+    const stream = context.lookup(ref);
+    if (!(stream instanceof PDFRawStream) || stream.dict.lookup(PDFName.of("Subtype")) !== PDFName.of("Form")) return null;
+    let bytes;
+    try {
+      bytes = PDFLib.decodePDFRawStream(stream).decode();
+    } catch (_) {
+      return null;
+    }
+    const own = stream.dict.lookupMaybe(PDFName.of("Resources"), PDFDict);
+    const m = stream.dict.lookupMaybe(PDFName.of("Matrix"), PDFArray);
+    return {
+      stream,
+      bytes,
+      written: false,
+      matrix: m && m.size() === 6 ? [0, 1, 2, 3, 4, 5].map((k) => numberOf(PDFLib, m.lookup(k)) || 0) : IDENTITY.slice(),
+      fonts: own ? resourceFonts(PDFLib, context, own) : null,
+      gstates: own ? resourceGStates(PDFLib, context, own) : null,
+      nested: own ? formResolver(PDFLib, context, own, shared, write) : null,
+    };
+  }
 }
 
 // Rewrites one page. blocks: metadata entries; zones: link rects whose
@@ -723,11 +730,13 @@ function removePageText(PDFLib, page, blocks, zones, shared) {
 }
 
 // Shown strings of one page with position and fill color, for extraction.
-function collectPageSegments(PDFLib, page) {
+// shared: a Map kept across the pages of one document, so forms drawn on
+// every page are read once.
+function collectPageSegments(PDFLib, page, shared) {
   const content = pageContentBytes(PDFLib, page);
   if (!content) return [];
   const context = page.doc.context;
-  const form = formResolver(PDFLib, context, page.node.Resources(), new Map(), false);
+  const form = formResolver(PDFLib, context, page.node.Resources(), shared || new Map(), false);
   const gstates = resourceGStates(PDFLib, context, page.node.Resources());
   return collectTextSegments(content, pageFonts(PDFLib, page), form, gstates)
     .map(({ x0, y0, x1, color, count, font, visible }) => ({ x0, y0, x1, color, count, font, visible }));

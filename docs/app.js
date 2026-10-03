@@ -57,10 +57,9 @@ let deckFonts = [];
 let sourcePdf = null;
 let pdfBytes = null;
 let pdfColors = null;
-let pdfjsPromise = null;
-let pdfLibPromise = null;
-let pdfFontPromise = null;
-let pdfBoldFontPromise = null;
+// Libraries and fonts loaded on first use, by name; a failed load is
+// forgotten so the next attempt retries.
+const loads = new Map();
 
 function show(el, text, className) {
   if (!text) {
@@ -270,19 +269,17 @@ function loadScript(src, integrity) {
   });
 }
 
-// A failed load is forgotten so the next attempt can retry.
-function once(getPromise, setPromise, start) {
-  let promise = getPromise();
-  if (!promise) {
-    promise = start();
-    setPromise(promise);
-    promise.catch(() => setPromise(null));
+function loadOnce(name, start) {
+  if (!loads.has(name)) {
+    const promise = start();
+    loads.set(name, promise);
+    promise.catch(() => loads.delete(name));
   }
-  return promise;
+  return loads.get(name);
 }
 
 function loadPdfjs() {
-  return once(() => pdfjsPromise, (p) => { pdfjsPromise = p; }, async () => {
+  return loadOnce("pdfjs", async () => {
     const lib = await import(PDFJS_URL);
     lib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER_URL;
     return lib;
@@ -290,25 +287,17 @@ function loadPdfjs() {
 }
 
 function loadPdfLib() {
-  return once(() => pdfLibPromise, (p) => { pdfLibPromise = p; }, async () => {
+  return loadOnce("pdf-lib", async () => {
     if (!window.PDFLib) await loadScript(PDF_LIB_URL, PDF_LIB_SRI);
     if (!window.fontkit) await loadScript(FONTKIT_URL, FONTKIT_SRI);
     return { PDFLib: window.PDFLib, fontkit: window.fontkit };
   });
 }
 
-function loadPdfFont() {
-  return once(() => pdfFontPromise, (p) => { pdfFontPromise = p; }, async () => {
-    const res = await fetch(PDF_FONT_URL);
+function loadFont(url) {
+  return loadOnce(url, async () => {
+    const res = await fetch(url);
     if (!res.ok) throw new Error(`フォントを読み込めませんでした（${res.status}）`);
-    return res.arrayBuffer();
-  });
-}
-
-function loadPdfBoldFont() {
-  return once(() => pdfBoldFontPromise, (p) => { pdfBoldFontPromise = p; }, async () => {
-    const res = await fetch(PDF_BOLD_FONT_URL);
-    if (!res.ok) throw new Error(`太字フォントを読み込めませんでした（${res.status}）`);
     return res.arrayBuffer();
   });
 }
@@ -423,10 +412,11 @@ async function readPdf(file) {
   let segmentsFor = null;
   try {
     const { PDFLib } = await loadPdfLib();
-    const doc = await PDFLib.PDFDocument.load(pdfBytes.slice(0), { ignoreEncryption: true, updateMetadata: false });
+    const doc = await PDFLib.PDFDocument.load(pdfBytes, { ignoreEncryption: true, updateMetadata: false });
     if (!doc.isEncrypted) {
       const pages = doc.getPages();
-      segmentsFor = (index) => (pages[index] ? collectPageSegments(PDFLib, pages[index]) : []);
+      const forms = new Map();
+      segmentsFor = (index) => (pages[index] ? collectPageSegments(PDFLib, pages[index], forms) : []);
     }
   } catch (err) {
     logError("PDF の文字色の読み取り", err);
@@ -456,8 +446,8 @@ async function writePdfResult(translations, fonts) {
   const needsBold = extracted.metadata.some((m) => (m.runs || []).some((r) => r.bold));
   const [{ PDFLib, fontkit }, fontBytes, boldFontBytes] = await Promise.all([
     loadPdfLib(),
-    loadPdfFont(),
-    needsBold ? loadPdfBoldFont() : null,
+    loadFont(PDF_FONT_URL),
+    needsBold ? loadFont(PDF_BOLD_FONT_URL) : null,
   ]);
   if (!pdfColors) {
     pdfColors = await samplePdfColors(sourcePdf, extracted.metadata, (page, total) => (
@@ -465,7 +455,7 @@ async function writePdfResult(translations, fonts) {
     ));
   }
   setProgress("訳文を書き込み中…");
-  const result = await injectPdfTexts(pdfBytes.slice(0), translations, extracted.metadata, {
+  const result = await injectPdfTexts(pdfBytes, translations, extracted.metadata, {
     PDFLib,
     fontkit,
     fontBytes,
