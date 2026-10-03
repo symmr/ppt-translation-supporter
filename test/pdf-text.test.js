@@ -13,6 +13,7 @@ const {
   fitBlock,
   injectPdfTexts,
   sampleBlockColors,
+  freeRoomRight,
   buildDocxFromPdf,
 } = require("../docs/pdf-text.js");
 const { extractDocxTexts } = require("../docs/docx-text.js");
@@ -308,4 +309,16 @@ test("Word output keeps run colors and hyperlinks", async () => {
   assert.match(xml, /<w:color w:val="DB2626"\/>/);
   assert.match(xml, /<w:hyperlink r:id="rIdLink1">.*ガイド.*<\/w:hyperlink>/);
   assert.match(rels, /Target="https:\/\/example.com\/manual" TargetMode="External"/);
+});
+
+test("free room stops where the background of a label changes", () => {
+  const width = 40;
+  const height = 6;
+  const data = new Uint8ClampedArray(width * height * 4);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      data.set(x < 25 ? [230, 0, 120, 255] : [255, 255, 255, 255], (y * width + x) * 4);
+    }
+  }
+  assert.equal(freeRoomRight({ data, width, height }, { x0: 2, y0: 1, x1: 10, y1: 4 }, "E60078"), 14);
 });

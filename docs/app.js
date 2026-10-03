@@ -60,6 +60,7 @@ let pdfColors = null;
 let pdfjsPromise = null;
 let pdfLibPromise = null;
 let pdfFontPromise = null;
+let pdfBoldFontPromise = null;
 
 function show(el, text, className) {
   if (!text) {
@@ -304,6 +305,14 @@ function loadPdfFont() {
   });
 }
 
+function loadPdfBoldFont() {
+  return once(() => pdfBoldFontPromise, (p) => { pdfBoldFontPromise = p; }, async () => {
+    const res = await fetch(PDF_BOLD_FONT_URL);
+    if (!res.ok) throw new Error(`太字フォントを読み込めませんでした（${res.status}）`);
+    return res.arrayBuffer();
+  });
+}
+
 function pdfOutput() {
   return pdfOutputSelect.value === "docx" ? "docx" : "pdf";
 }
@@ -316,7 +325,7 @@ function syncOutputUi() {
   pdfOutputRow.hidden = !isPdf;
   pdfOutputNote.hidden = !isPdf;
   pdfOutputNote.textContent = overlay
-    ? `PDF の中の原文を消し、同じ位置に訳文を ${PDF_FONT_NAME} で書き込みます。背景や図形はそのまま残ります。枠に収まらない訳文は小さくなります。初回はフォント（約 5MB）を読み込みます。`
+    ? `PDF の中の原文を消し、同じ位置に訳文を ${PDF_FONT_NAME} で書き込みます。背景や図形はそのまま残ります。枠に収まらない訳文は小さくなります。初回はフォント（約 5MB、太字があればもう 5MB）を読み込みます。`
     : "ページ順に、訳文を1ブロック1段落で並べた Word 文書を作ります。図や表のレイアウトは引き継ぎません。";
   fontNote.hidden = overlay;
   fontRow.hidden = overlay;
@@ -444,7 +453,12 @@ async function writePdfResult(translations, fonts) {
     return { blob, result: built };
   }
   setProgress("PDF 用のライブラリとフォントを読み込み中…");
-  const [{ PDFLib, fontkit }, fontBytes] = await Promise.all([loadPdfLib(), loadPdfFont()]);
+  const needsBold = extracted.metadata.some((m) => (m.runs || []).some((r) => r.bold));
+  const [{ PDFLib, fontkit }, fontBytes, boldFontBytes] = await Promise.all([
+    loadPdfLib(),
+    loadPdfFont(),
+    needsBold ? loadPdfBoldFont() : null,
+  ]);
   if (!pdfColors) {
     pdfColors = await samplePdfColors(sourcePdf, extracted.metadata, (page, total) => (
       setProgress(`背景色を調べています… ${page} / ${total} ページ`)
@@ -455,6 +469,7 @@ async function writePdfResult(translations, fonts) {
     PDFLib,
     fontkit,
     fontBytes,
+    boldFontBytes,
     colors: pdfColors,
   });
   return { blob: new Blob([result.bytes], { type: "application/pdf" }), result };

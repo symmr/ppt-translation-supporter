@@ -238,12 +238,16 @@ const PAINT_OPS = new Set(["S", "s", "f", "F", "f*", "B", "B*", "b", "b*", "n"])
 // every painted path, onPath(path) may return true to remove it.
 // seg: { x0, y0, x1, mx, my, size, color, visible, count, horizontal }
 // path: { ops, paint, bbox, lineWidth }
-function walkContent(bytes, fonts, handlers) {
+// handlers.form(name) may resolve a form XObject drawn with Do into
+// { bytes, fonts, matrix, nested, finish(result) }; its content is walked
+// with the same handlers and finish() decides what to do with the edits.
+function walkContent(bytes, fonts, handlers, initialGs, depth) {
   const ops = parseOps(bytes);
   const edits = [];
-  let gs = {
+  let gs = initialGs ? { ...initialGs, ctm: initialGs.ctm.slice() } : {
     ctm: IDENTITY.slice(), Tc: 0, Tw: 0, Th: 1, TL: 0, Tfs: 0, font: null, rise: 0, Tr: 0, fill: "000000", lw: 1,
   };
+  const level = depth || 0;
   const saved = [];
   let tm = IDENTITY.slice();
   let tlm = IDENTITY.slice();
@@ -277,6 +281,7 @@ function walkContent(bytes, fonts, handlers) {
         color: gs.fill,
         visible: gs.Tr !== 3 && gs.Tr !== 7,
         count: codesOf(gs.font, el).length,
+        font: (gs.font && gs.font.base) || "",
         horizontal: at[0] > 0 && Math.abs(at[1]) <= at[0] * 0.02 && Math.abs(at[2]) <= Math.abs(at[3]) * 0.02,
       };
       if (el.length && scale && onString(seg)) {
@@ -362,6 +367,14 @@ function walkContent(bytes, fonts, handlers) {
         }
         break;
       case "T*": nextLine(); break;
+      case "Do": {
+        const form = handlers.form && level < 6 && a[0] && a[0].name ? handlers.form(a[0].name) : null;
+        if (form) {
+          const inner = { ...gs, ctm: mul(form.matrix, gs.ctm) };
+          form.finish(walkContent(form.bytes, form.fonts, { ...handlers, form: form.nested }, inner, level + 1));
+        }
+        break;
+      }
       case "Tj": {
         const out = a[0] instanceof Uint8Array ? show([a[0]]) : null;
         if (out) edits.push({ start, end, text: serialize(out) });
@@ -440,7 +453,7 @@ function underlineZone(path, zones) {
 // bytes: decoded page content. rects: [{ x0, y0, x1, y1 }] in user space.
 // zones: link rects whose underlines go too. Returns the new content, how
 // many visible strings went per rect, and how many underlines per zone.
-function removeTextInRects(bytes, rects, fonts, zones) {
+function removeTextInRects(bytes, rects, fonts, zones, form) {
   const hits = new Array(rects.length).fill(0);
   const underlines = new Array((zones || []).length).fill(0);
   const result = walkContent(bytes, fonts, {
@@ -457,18 +470,20 @@ function removeTextInRects(bytes, rects, fonts, zones) {
       underlines[zone] += 1;
       return true;
     },
+    form,
   });
   return { bytes: result.bytes, hits, underlines, removed: result.removed };
 }
 
 // Visible horizontal strings with their position and fill color.
-function collectTextSegments(bytes, fonts) {
+function collectTextSegments(bytes, fonts, form) {
   const segments = [];
   walkContent(bytes, fonts, {
     onString: (seg) => {
       if (seg.visible && seg.horizontal) segments.push(seg);
       return false;
     },
+    form,
   });
   return segments;
 }
@@ -549,16 +564,23 @@ function fontWidths(PDFLib, context, fontDict) {
 }
 
 function pageFonts(PDFLib, page) {
+  return resourceFonts(PDFLib, page.doc.context, page.node.Resources());
+}
+
+function resourceFonts(PDFLib, context, resources) {
   const { PDFName, PDFDict } = PDFLib;
   const fonts = {};
-  const resources = page.node.Resources();
   const fontRes = resources && resources.lookupMaybe(PDFName.of("Font"), PDFDict);
   if (!fontRes) return fonts;
   for (const [key, value] of fontRes.entries()) {
-    const dict = page.doc.context.lookupMaybe(value, PDFDict);
+    const dict = context.lookupMaybe(value, PDFDict);
     if (!dict) continue;
     try {
-      fonts[key.decodeText ? key.decodeText() : key.asString().slice(1)] = fontWidths(PDFLib, page.doc.context, dict);
+      const info = fontWidths(PDFLib, context, dict);
+      const base = dict.lookup(PDFLib.PDFName.of("BaseFont"));
+      // "ABCDEF+Name": the subset prefix differs between subsets of one font
+      info.base = base instanceof PDFLib.PDFName ? base.decodeText().replace(/^[A-Z]{6}\+/, "") : "";
+      fonts[key.decodeText ? key.decodeText() : key.asString().slice(1)] = info;
     } catch (_) {
       // unreadable font dict: its text stays and the block gets covered
     }
@@ -593,11 +615,60 @@ function pageContentBytes(PDFLib, page) {
   return out;
 }
 
+// Resolves form XObjects for walkContent. shared (one Map per document)
+// keeps each form's original content, so a header form drawn on every page
+// is judged against the same bytes and rewritten once, in place, at its own
+// reference. write=false only reads.
+function formResolver(PDFLib, context, resources, shared, write) {
+  const { PDFName, PDFDict, PDFArray, PDFRawStream, PDFNumber } = PDFLib;
+  return (name) => {
+    const xobjects = resources && resources.lookupMaybe(PDFName.of("XObject"), PDFDict);
+    const ref = xobjects && xobjects.get(PDFName.of(name));
+    const stream = ref && context.lookup(ref);
+    if (!(stream instanceof PDFRawStream)) return null;
+    if (stream.dict.lookup(PDFName.of("Subtype")) !== PDFName.of("Form")) return null;
+    const key = ref instanceof PDFLib.PDFRef ? ref.toString() : null;
+    let entry = key ? shared.get(key) : null;
+    if (!entry) {
+      let bytes;
+      try {
+        bytes = PDFLib.decodePDFRawStream(stream).decode();
+      } catch (_) {
+        return null;
+      }
+      entry = { bytes, written: false };
+      if (key) shared.set(key, entry);
+    }
+    const formResources = stream.dict.lookupMaybe(PDFName.of("Resources"), PDFDict) || resources;
+    const m = stream.dict.lookupMaybe(PDFName.of("Matrix"), PDFArray);
+    const matrix = m && m.size() === 6
+      ? [0, 1, 2, 3, 4, 5].map((k) => { const v = m.lookup(k); return v instanceof PDFNumber ? v.asNumber() : 0; })
+      : IDENTITY.slice();
+    return {
+      bytes: entry.bytes,
+      fonts: resourceFonts(PDFLib, context, formResources),
+      matrix,
+      nested: formResolver(PDFLib, context, formResources, shared, write),
+      finish: (result) => {
+        if (!write || entry.written || !result.removed || !(ref instanceof PDFLib.PDFRef)) return;
+        const dict = {};
+        for (const [k, v] of stream.dict.entries()) {
+          const keyName = k.decodeText();
+          if (keyName !== "Filter" && keyName !== "DecodeParms" && keyName !== "Length") dict[keyName] = v;
+        }
+        context.assign(ref, context.flateStream(result.bytes, dict));
+        entry.written = true;
+      },
+    };
+  };
+}
+
 // Rewrites one page. blocks: metadata entries; zones: link rects whose
-// underlines should go too. Returns the ids whose original text was removed
+// underlines should go too; shared: a Map kept across the pages of one
+// document (form XObjects). Returns the ids whose original text was removed
 // (the rest still need a cover) and the indexes of zones that lost an
 // underline.
-function removePageText(PDFLib, page, blocks, zones) {
+function removePageText(PDFLib, page, blocks, zones, shared) {
   const none = { done: new Set(), underlined: new Set() };
   if (!blocks.length) return none;
   let content;
@@ -613,13 +684,14 @@ function removePageText(PDFLib, page, blocks, zones) {
     x1: b.x + b.w + b.size * 0.3,
     y1: b.y + b.h + b.size * 0.2,
   }));
-  const result = removeTextInRects(content, rects, pageFonts(PDFLib, page), zones || []);
+  const context = page.doc.context;
+  const form = formResolver(PDFLib, context, page.node.Resources(), shared || new Map(), true);
+  const result = removeTextInRects(content, rects, pageFonts(PDFLib, page), zones || [], form);
   const done = new Set();
   result.hits.forEach((count, k) => { if (count > 0) done.add(blocks[k].id); });
   const underlined = new Set();
   result.underlines.forEach((count, k) => { if (count > 0) underlined.add(k); });
   if (result.removed) {
-    const context = page.doc.context;
     const ref = context.register(context.flateStream(result.bytes));
     page.node.set(PDFLib.PDFName.of("Contents"), ref);
   }
@@ -630,8 +702,9 @@ function removePageText(PDFLib, page, blocks, zones) {
 function collectPageSegments(PDFLib, page) {
   const content = pageContentBytes(PDFLib, page);
   if (!content) return [];
-  return collectTextSegments(content, pageFonts(PDFLib, page))
-    .map(({ x0, y0, x1, color, count }) => ({ x0, y0, x1, color, count }));
+  const form = formResolver(PDFLib, page.doc.context, page.node.Resources(), new Map(), false);
+  return collectTextSegments(content, pageFonts(PDFLib, page), form)
+    .map(({ x0, y0, x1, color, count, font }) => ({ x0, y0, x1, color, count, font }));
 }
 
 // Decoded page content as text, for tests and debugging.
