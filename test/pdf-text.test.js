@@ -185,3 +185,21 @@ test("rewrites the page so the original text is gone, keeping the rest in place"
   assert.equal(right.firstBaseline, 200);
   assert.ok(again.metadata.some((m) => m.text === "Quarterly Report"));
 });
+
+test("text color is the most common ink, not a mix of a sentence's colors", () => {
+  const width = 30;
+  const height = 10;
+  const data = new Uint8ClampedArray(width * height * 4);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const inside = y >= 3 && y <= 6 && x >= 3 && x <= 26;
+      let color = [255, 255, 255];
+      if (inside) color = x < 16 ? [20, 20, 20] : x < 21 ? [220, 38, 38] : [22, 163, 74];
+      data.set([...color, 255], (y * width + x) * 4);
+    }
+  }
+  assert.deepEqual(sampleBlockColors({ data, width, height }, { x0: 2, y0: 2, x1: 27, y1: 7 }), {
+    fill: "FFFFFF",
+    ink: "141414",
+  });
+});

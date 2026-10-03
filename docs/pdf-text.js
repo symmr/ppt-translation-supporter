@@ -391,6 +391,20 @@ async function injectPdfTexts(bytes, translations, metadata, deps) {
   return { bytes: out, injected, missing, flattened: [], tagArtifacts, overflowed, covered };
 }
 
+// The most common text color. A per-channel median would mix a sentence's
+// black, red and green words into a color none of them has.
+function dominantColor(pixels, channel) {
+  const bins = new Map();
+  for (const p of pixels) {
+    const key = (p[0] >> 5) * 64 + (p[1] >> 5) * 8 + (p[2] >> 5);
+    if (!bins.has(key)) bins.set(key, []);
+    bins.get(key).push(p);
+  }
+  let best = [];
+  for (const members of bins.values()) if (members.length > best.length) best = members;
+  return [0, 1, 2].map((i) => channel(best, i));
+}
+
 // Background and text colors of each block, from a rendered page.
 // image: { data, width, height } (RGBA), rect: pixel box of the block.
 function sampleBlockColors(image, rect) {
@@ -419,7 +433,7 @@ function sampleBlockColors(image, rect) {
   const lum = 0.2126 * fill[0] + 0.7152 * fill[1] + 0.0722 * fill[2];
   const ink = inkPixels.length < 4
     ? (lum < 140 ? [255, 255, 255] : [30, 30, 30])
-    : [0, 1, 2].map((i) => channel(inkPixels, i));
+    : dominantColor(inkPixels, channel);
   const hex = (p) => p.map((n) => Math.round(n).toString(16).padStart(2, "0")).join("").toUpperCase();
   return { fill: hex(fill), ink: hex(ink) };
 }
