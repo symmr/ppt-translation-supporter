@@ -1,4 +1,4 @@
-# PPT Translation Supporter
+# Translation Supporter
 
 PowerPoint (`.pptx`)、Word (`.docx`)、PDF (`.pdf`) のテキストをブラウザ内で抽出し、翻訳文を書き戻すツール。ファイルはサーバへ送信されません。DOCX は本文、表、テキストボックス（`word/document.xml`）が対象です。ヘッダー、フッター、脚注は対象外です。PDF はテキストを持つページが対象で、スキャンした画像だけの PDF やパスワード付きの PDF は扱えません。
 
