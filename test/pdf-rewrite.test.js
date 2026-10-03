@@ -38,3 +38,10 @@ test("invisible text is removed but not counted as visible", () => {
   assert.deepEqual(out.hits, [0]);
   assert.equal(out.removed, 1);
 });
+
+test("text drawn fully transparent (alt text) is marked invisible", () => {
+  const { collectTextSegments } = require("../docs/pdf-rewrite.js");
+  const src = "BT /F1 10 Tf 10 10 Td (Seen) Tj ET q /GS0 gs BT /F1 10 Tf 10 30 Td (Alt) Tj ET Q BT /F1 10 Tf 10 50 Td (Again) Tj ET";
+  const segs = collectTextSegments(enc(src), font, null, { GS0: { ca: 0 } });
+  assert.deepEqual(segs.map((s) => s.visible), [true, false, true]);
+});

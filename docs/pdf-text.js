@@ -23,6 +23,13 @@ const CJK_RE = /[⺀-鿿가-힯豈-﫿＀-￯]/;
 const NO_LINE_START_RE = /[、。，．,.:;!?！？）」』】〕〉》”’ー々ぁぃぅぇぉっゃゅょァィゥェォッャュョ・：；\])}]/;
 const NO_LINE_END_RE = /[（「『【〔〈《“‘([{]/;
 const MIN_SHRINK = 0.5;
+// A list marker at the start of a line: bullets, "1.", "a)", "(iv)".
+const LIST_MARKER_RE = /^(?:[•●○◦▪■□❏❑✓✔➢►▶‣⁃*\-–—]|\(?(?:\d{1,3}|[A-Za-z]|[ivxIVX]{1,4})[.)])(?:\s|$)/u;
+// Nothing to translate: no letters, or only a list marker.
+function isMarkerOnly(text) {
+  const t = String(text).trim();
+  return !/\p{L}/u.test(t) || /^\(?(?:\d{1,3}|[A-Za-z]|[ivxIVX]{1,4})[.)]$/u.test(t);
+}
 
 function isCjk(ch) {
   return CJK_RE.test(ch || "");
@@ -147,6 +154,7 @@ function itemsToLines(items, styles, styler) {
       if (!sameBaseline || !near) close();
     }
     const pieces = styler ? styler(item, x, y, size) : [{ text: str, style: "" }];
+    if (!pieces) continue;
     const firstFont = pieces.firstFont || item.fontName || "";
     const lastFont = pieces.lastFont || item.fontName || "";
     if (!line) {
@@ -194,9 +202,11 @@ function linesToBlocks(lines) {
       // a line ending in one font followed by a line starting in another is
       // a heading over its paragraph (same size, different weight)
       const fontOk = !block.lastFont || !line.firstFont || block.lastFont === line.firstFont;
+      // a list marker starts a new item; a marker on its own never joins
+      const listOk = !LIST_MARKER_RE.test(line.text) && !isMarkerOnly(line.text) && !isMarkerOnly(block.lastText);
       const joins = ratio > 0.8 && ratio < 1.25 &&
         dy > 0.6 * block.size && dy < 1.9 * block.size &&
-        overlaps && indentOk && pitchOk && fontOk;
+        overlaps && indentOk && pitchOk && fontOk && listOk;
       if (joins) {
         block.leading = block.leading || dy;
         joinLines(block.runs, line.runs);
@@ -205,6 +215,7 @@ function linesToBlocks(lines) {
         block.bottom = Math.min(block.bottom, line.y - line.descent * line.size);
         block.lastY = line.y;
         block.lastFont = line.lastFont;
+        block.lastText = line.text;
         block.lineCount += 1;
         continue;
       }
@@ -221,6 +232,7 @@ function linesToBlocks(lines) {
       leading: 0,
       lineCount: 1,
       lastFont: line.lastFont,
+      lastText: line.text,
       runs: line.runs.map((r) => ({ ...r })),
     };
   }
@@ -252,7 +264,11 @@ function makeStyler(segments, links, styleTable) {
   return (item, x, y, size) => {
     const chars = Array.from(String(item.str));
     const width = item.width || 0;
-    const onLine = segments.filter((s) => Math.abs(s.y0 - y) < 0.35 * size);
+    const nearby = segments.filter((s) => Math.abs(s.y0 - y) < 0.35 * size);
+    const onLine = nearby.filter((s) => s.visible !== false);
+    // transparent or invisible text (alt text, OCR layers) is not extracted
+    if (!onLine.some((s) => s.x1 > x && s.x0 < x + width) &&
+      nearby.some((s) => s.visible === false && s.x0 >= x - 0.5 && s.x0 < x + width)) return null;
     // strings that start inside the item; else the one drawn over its middle
     let segs = onLine.filter((s) => s.x0 >= x - 0.5 && s.x0 < x + width - 0.05);
     if (!segs.length) {
@@ -350,6 +366,8 @@ async function extractPdfTexts(pdf, onPage, options) {
     const styleTable = new Map();
     const styler = segments.length || links.length ? makeStyler(segments, links, styleTable) : null;
     for (const block of linesToBlocks(itemsToLines(content.items, content.styles, styler))) {
+      // bullets, "1.", "a." and the like stay as they are
+      if (isMarkerOnly(block.text)) continue;
       const uid = `uid_${String(uidNum).padStart(4, "0")}`;
       uidNum += 1;
       texts.push(uid);
@@ -539,6 +557,32 @@ function patchFontkitSubset(fontkit, fontBytes) {
   proto._addGlyphEvenPadded = true;
 }
 
+// Look-alikes for symbols the embedded font lacks (list bullets drawn with
+// Wingdings or Segoe UI Symbol in the original). One character for one, so
+// the per-character styles stay aligned.
+const GLYPH_SUBSTITUTES = {
+  "❏": "□", "❑": "□", "❒": "□", "☐": "□", "☑": "■", "☒": "■",
+  "►": "▶", "➢": "▶", "➤": "▶", "➔": "→", "➜": "→",
+  "✔": "✓", "✗": "×", "✘": "×",
+  // Symbol / Wingdings private-use code points
+  "\uF0B7": "•", "\uF0A7": "▪", "\uF0D8": "▶", "\uF0FC": "✓",
+  "\uF06E": "■", "\uF06F": "□", "\uF071": "□", "\uF076": "◆",
+};
+
+function substituteGlyphs(text, fonts) {
+  const sets = fonts.map((f) => {
+    try { return new Set(f.getCharacterSet()); } catch (_) { return null; }
+  });
+  if (sets.some((set) => !set)) return text;
+  const has = (ch) => sets.every((set) => set.has(ch.codePointAt(0)));
+  let out = "";
+  for (const ch of text) {
+    const sub = GLYPH_SUBSTITUTES[ch];
+    out += sub && !has(ch) && has(sub) ? sub : ch;
+  }
+  return out;
+}
+
 function hexToRgb(PDFLib, hex, fallback) {
   const value = /^[0-9a-f]{6}$/i.test(hex || "") ? hex : fallback;
   const n = parseInt(value, 16);
@@ -650,6 +694,7 @@ async function injectPdfTexts(bytes, translations, metadata, deps) {
       continue;
     }
     const styled = styledText(meta, translations[meta.id]);
+    styled.text = substituteGlyphs(styled.text, boldFont ? [font, boldFont] : [font]);
     if (styled.flattened) flattened.push(meta.id);
     if (styled.tagArtifact) tagArtifacts.push(meta.id);
     targets.push({ meta, styled });

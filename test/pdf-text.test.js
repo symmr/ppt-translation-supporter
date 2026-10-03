@@ -322,3 +322,29 @@ test("free room stops where the background of a label changes", () => {
   }
   assert.equal(freeRoomRight({ data, width, height }, { x0: 2, y0: 1, x1: 10, y1: 4 }, "E60078"), 14);
 });
+
+test("list markers start new items and marker-only lines are left out", () => {
+  const lines = itemsToLines([
+    item("1.", 10, 200, 10, 8),
+    item("Which component indexes data?", 40, 200, 10, 150),
+    item("a.", 40, 186, 10, 8),
+    item("Indexer", 70, 186, 10, 35),
+    item("b. Search head that is", 40, 172, 10, 110),
+    item("very long", 40, 158, 10, 45),
+  ], {});
+  const blocks = linesToBlocks(lines).map((b) => b.text);
+  assert.deepEqual(blocks, ["1.", "Which component indexes data?", "a.", "Indexer", "b. Search head that is very long"]);
+});
+
+test("symbols the font lacks are drawn as look-alikes", async () => {
+  const doc = await PDFLib.PDFDocument.create();
+  const font = await doc.embedFont(PDFLib.StandardFonts.Helvetica);
+  const page = doc.addPage([400, 200]);
+  page.drawText("Item one", { x: 50, y: 150, size: 12, font });
+  const bytes = await doc.save();
+  const extracted = await extractPdfTexts(await openPdf(bytes));
+  // Helvetica has no ❏ or □, so the text is kept as is; it has • for 
+  const result = await injectPdfTexts(bytes, { uid_0001: " Punkt eins" }, extracted.metadata, { PDFLib });
+  const again = await extractPdfTexts(await openPdf(result.bytes));
+  assert.equal(again.lines[1], "• Punkt eins");
+});

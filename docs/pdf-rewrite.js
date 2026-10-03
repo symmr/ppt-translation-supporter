@@ -245,9 +245,10 @@ function walkContent(bytes, fonts, handlers, initialGs, depth) {
   const ops = parseOps(bytes);
   const edits = [];
   let gs = initialGs ? { ...initialGs, ctm: initialGs.ctm.slice() } : {
-    ctm: IDENTITY.slice(), Tc: 0, Tw: 0, Th: 1, TL: 0, Tfs: 0, font: null, rise: 0, Tr: 0, fill: "000000", lw: 1,
+    ctm: IDENTITY.slice(), Tc: 0, Tw: 0, Th: 1, TL: 0, Tfs: 0, font: null, rise: 0, Tr: 0, fill: "000000", lw: 1, alpha: 1,
   };
   const level = depth || 0;
+  const gstates = handlers.gstates || {};
   const saved = [];
   let tm = IDENTITY.slice();
   let tlm = IDENTITY.slice();
@@ -279,7 +280,7 @@ function walkContent(bytes, fonts, handlers, initialGs, depth) {
         x0, y0, x1, mx, my,
         size: Math.abs(gs.Tfs) * Math.hypot(at[2], at[3]),
         color: gs.fill,
-        visible: gs.Tr !== 3 && gs.Tr !== 7,
+        visible: gs.Tr !== 3 && gs.Tr !== 7 && gs.alpha > 0.02,
         count: codesOf(gs.font, el).length,
         font: (gs.font && gs.font.base) || "",
         horizontal: at[0] > 0 && Math.abs(at[1]) <= at[0] * 0.02 && Math.abs(at[2]) <= Math.abs(at[3]) * 0.02,
@@ -340,6 +341,11 @@ function walkContent(bytes, fonts, handlers, initialGs, depth) {
         if (a.length >= 6) gs.ctm = mul(a.slice(0, 6).map((v) => num(v, 0)), gs.ctm);
         break;
       case "w": gs.lw = num(a[0], 1); break;
+      case "gs": {
+        const state = a[0] && gstates[a[0].name];
+        if (state && typeof state.ca === "number") gs.alpha = state.ca;
+        break;
+      }
       case "g": case "rg": case "k": setFill(a); break;
       case "sc": case "scn": setFill(a); break;
       case "cs": gs.fill = a[0] && a[0].name === "Pattern" ? null : "000000"; break;
@@ -371,7 +377,7 @@ function walkContent(bytes, fonts, handlers, initialGs, depth) {
         const form = handlers.form && level < 6 && a[0] && a[0].name ? handlers.form(a[0].name) : null;
         if (form) {
           const inner = { ...gs, ctm: mul(form.matrix, gs.ctm) };
-          form.finish(walkContent(form.bytes, form.fonts, { ...handlers, form: form.nested }, inner, level + 1));
+          form.finish(walkContent(form.bytes, form.fonts, { ...handlers, form: form.nested, gstates: form.gstates }, inner, level + 1));
         }
         break;
       }
@@ -453,7 +459,7 @@ function underlineZone(path, zones) {
 // bytes: decoded page content. rects: [{ x0, y0, x1, y1 }] in user space.
 // zones: link rects whose underlines go too. Returns the new content, how
 // many visible strings went per rect, and how many underlines per zone.
-function removeTextInRects(bytes, rects, fonts, zones, form) {
+function removeTextInRects(bytes, rects, fonts, zones, form, gstates) {
   const hits = new Array(rects.length).fill(0);
   const underlines = new Array((zones || []).length).fill(0);
   const result = walkContent(bytes, fonts, {
@@ -471,19 +477,21 @@ function removeTextInRects(bytes, rects, fonts, zones, form) {
       return true;
     },
     form,
+    gstates,
   });
   return { bytes: result.bytes, hits, underlines, removed: result.removed };
 }
 
-// Visible horizontal strings with their position and fill color.
-function collectTextSegments(bytes, fonts, form) {
+// Horizontal strings with their position, fill color and visibility.
+function collectTextSegments(bytes, fonts, form, gstates) {
   const segments = [];
   walkContent(bytes, fonts, {
     onString: (seg) => {
-      if (seg.visible && seg.horizontal) segments.push(seg);
+      if (seg.horizontal) segments.push(seg);
       return false;
     },
     form,
+    gstates,
   });
   return segments;
 }
@@ -567,6 +575,20 @@ function pageFonts(PDFLib, page) {
   return resourceFonts(PDFLib, page.doc.context, page.node.Resources());
 }
 
+// Fill alpha (ca) of each ExtGState, to tell transparent text apart.
+function resourceGStates(PDFLib, context, resources) {
+  const { PDFName, PDFDict, PDFNumber } = PDFLib;
+  const out = {};
+  const dict = resources && resources.lookupMaybe(PDFName.of("ExtGState"), PDFDict);
+  if (!dict) return out;
+  for (const [key, value] of dict.entries()) {
+    const state = context.lookupMaybe(value, PDFDict);
+    const ca = state && state.lookup(PDFName.of("ca"));
+    out[key.decodeText()] = { ca: ca instanceof PDFNumber ? ca.asNumber() : undefined };
+  }
+  return out;
+}
+
 function resourceFonts(PDFLib, context, resources) {
   const { PDFName, PDFDict } = PDFLib;
   const fonts = {};
@@ -647,6 +669,7 @@ function formResolver(PDFLib, context, resources, shared, write) {
     return {
       bytes: entry.bytes,
       fonts: resourceFonts(PDFLib, context, formResources),
+      gstates: resourceGStates(PDFLib, context, formResources),
       matrix,
       nested: formResolver(PDFLib, context, formResources, shared, write),
       finish: (result) => {
@@ -686,7 +709,8 @@ function removePageText(PDFLib, page, blocks, zones, shared) {
   }));
   const context = page.doc.context;
   const form = formResolver(PDFLib, context, page.node.Resources(), shared || new Map(), true);
-  const result = removeTextInRects(content, rects, pageFonts(PDFLib, page), zones || [], form);
+  const gstates = resourceGStates(PDFLib, context, page.node.Resources());
+  const result = removeTextInRects(content, rects, pageFonts(PDFLib, page), zones || [], form, gstates);
   const done = new Set();
   result.hits.forEach((count, k) => { if (count > 0) done.add(blocks[k].id); });
   const underlined = new Set();
@@ -702,9 +726,11 @@ function removePageText(PDFLib, page, blocks, zones, shared) {
 function collectPageSegments(PDFLib, page) {
   const content = pageContentBytes(PDFLib, page);
   if (!content) return [];
-  const form = formResolver(PDFLib, page.doc.context, page.node.Resources(), new Map(), false);
-  return collectTextSegments(content, pageFonts(PDFLib, page), form)
-    .map(({ x0, y0, x1, color, count, font }) => ({ x0, y0, x1, color, count, font }));
+  const context = page.doc.context;
+  const form = formResolver(PDFLib, context, page.node.Resources(), new Map(), false);
+  const gstates = resourceGStates(PDFLib, context, page.node.Resources());
+  return collectTextSegments(content, pageFonts(PDFLib, page), form, gstates)
+    .map(({ x0, y0, x1, color, count, font, visible }) => ({ x0, y0, x1, color, count, font, visible }));
 }
 
 // Decoded page content as text, for tests and debugging.
