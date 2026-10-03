@@ -9,6 +9,10 @@
 const PDF_FONT_URL = "https://cdn.jsdelivr.net/npm/@expo-google-fonts/noto-sans-jp@0.4.1/400Regular/NotoSansJP_400Regular.ttf";
 const PDF_FONT_NAME = "Noto Sans JP";
 
+const rewrite = typeof module !== "undefined" && module.exports
+  ? require("./pdf-rewrite.js")
+  : window;
+
 const TAG_LIKE_RE = /(?:\[\/?\d+\]|⟦\/?\d+⟧)/;
 // CJK, kana, full-width forms: no spaces between these when joining pieces.
 const CJK_RE = /[⺀-鿿가-힯豈-﫿＀-￯]/;
@@ -304,9 +308,10 @@ function hexToRgb(PDFLib, hex, fallback) {
   return PDFLib.rgb(((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255);
 }
 
-// Covers each translated block with its background color and draws the
-// translation on top. The original text stays in the page content under the
-// cover, so copy and search can still find it.
+// Removes the original text of each translated block from the page content
+// and draws the translation in its place. Blocks whose text cannot be removed
+// that way (form XObjects, invisible OCR text) are covered with their
+// background color instead, and their original text stays in the file.
 // deps: { PDFLib, fontkit, fontBytes, colors: { uid: { fill, ink } } }
 async function injectPdfTexts(bytes, translations, metadata, deps) {
   const { PDFLib } = deps;
@@ -333,24 +338,40 @@ async function injectPdfTexts(bytes, translations, metadata, deps) {
   let missing = 0;
   const tagArtifacts = [];
   const overflowed = [];
+  const targets = [];
   for (const meta of metadata || []) {
-    const translated = translations[meta.id];
+    if (translations[meta.id] === undefined || !pages[meta.page]) missing += 1;
+    else targets.push(meta);
+  }
+  // Take the original text out of each page first; pdf-lib's own drawing is
+  // appended afterwards as a separate content stream.
+  const removed = new Set();
+  const byPage = new Map();
+  for (const meta of targets) {
+    if (!byPage.has(meta.page)) byPage.set(meta.page, []);
+    byPage.get(meta.page).push(meta);
+  }
+  for (const [index, metas] of byPage) {
+    for (const id of rewrite.removePageText(PDFLib, pages[index], metas)) removed.add(id);
+  }
+  const covered = [];
+  for (const meta of targets) {
     const page = pages[meta.page];
-    if (translated === undefined || !page) {
-      missing += 1;
-      continue;
-    }
-    const text = String(translated).replace(/\s+$/, "");
+    const text = String(translations[meta.id]).replace(/\s+$/, "");
     if (TAG_LIKE_RE.test(text)) tagArtifacts.push(meta.id);
     const color = colors[meta.id] || {};
-    const pad = Math.max(1, meta.size * 0.08);
-    page.drawRectangle({
-      x: meta.x - pad,
-      y: meta.y - pad,
-      width: meta.w + pad * 2,
-      height: meta.h + pad * 2,
-      color: hexToRgb(PDFLib, color.fill, "FFFFFF"),
-    });
+    if (!removed.has(meta.id)) {
+      // text in a form XObject or an invisible OCR layer: cover it instead
+      covered.push(meta.id);
+      const pad = Math.max(1, meta.size * 0.08);
+      page.drawRectangle({
+        x: meta.x - pad,
+        y: meta.y - pad,
+        width: meta.w + pad * 2,
+        height: meta.h + pad * 2,
+        color: hexToRgb(PDFLib, color.fill, "FFFFFF"),
+      });
+    }
     const box = page.getMediaBox();
     const maxWidth = box.x + box.width - meta.x - Math.min(36, box.width * 0.05);
     const fit = fitBlock(text, meta, (s, size) => font.widthOfTextAtSize(s, size), maxWidth);
@@ -367,7 +388,7 @@ async function injectPdfTexts(bytes, translations, metadata, deps) {
     injected += 1;
   }
   const out = await doc.save();
-  return { bytes: out, injected, missing, flattened: [], tagArtifacts, overflowed };
+  return { bytes: out, injected, missing, flattened: [], tagArtifacts, overflowed, covered };
 }
 
 // Background and text colors of each block, from a rendered page.

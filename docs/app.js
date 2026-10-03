@@ -316,7 +316,7 @@ function syncOutputUi() {
   pdfOutputRow.hidden = !isPdf;
   pdfOutputNote.hidden = !isPdf;
   pdfOutputNote.textContent = overlay
-    ? `元のページの文字を背景色で覆い、その上に訳文を ${PDF_FONT_NAME} で書きます。枠に収まらない訳文は小さくなります。初回はフォント（約 5MB）を読み込みます。覆った下に原文が残るため、PDF 内の検索やコピーでは原文も拾われます。`
+    ? `PDF の中の原文を消し、同じ位置に訳文を ${PDF_FONT_NAME} で書き込みます。背景や図形はそのまま残ります。枠に収まらない訳文は小さくなります。初回はフォント（約 5MB）を読み込みます。`
     : "ページ順に、訳文を1ブロック1段落で並べた Word 文書を作ります。図や表のレイアウトは引き継ぎません。";
   fontNote.hidden = overlay;
   fontRow.hidden = overlay;
@@ -549,6 +549,13 @@ async function applyTranslation(source, sourceLabel) {
       notes.push(
         `タグ（[0]...[/0]）が原文と一致しないため、${flattened.length} 件は段落内の書式（色分けなど）を維持できませんでした: ` +
         `${flattened.slice(0, 8).join(", ")}${flattened.length > 8 ? " …" : ""}`
+      );
+    }
+    const covered = result.covered || [];
+    if (covered.length) {
+      notes.push(
+        `${covered.length} 件は原文の文字を消せなかった（図形内の文字やスキャン画像など）ため、背景色で覆って訳文を書きました: ` +
+        `${covered.slice(0, 8).join(", ")}${covered.length > 8 ? " …" : ""}`
       );
     }
     const overflowed = result.overflowed || [];

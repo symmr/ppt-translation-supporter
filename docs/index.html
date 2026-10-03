@@ -513,7 +513,7 @@
         <div class="opt">
           <label for="pdfOutputSelect">出力形式</label>
           <select id="pdfOutputSelect">
-            <option value="pdf">PDF（元のページに訳文を重ねる）</option>
+            <option value="pdf">PDF（原文を訳文に書き換える）</option>
             <option value="docx">Word（.docx、訳文を段落として並べる）</option>
           </select>
         </div>
@@ -590,7 +590,7 @@
           if (data.version) version = data.version;
         }
       } catch (_) {}
-      for (const file of ["pptx-text.js", "docx-text.js", "pdf-text.js", "image-text.js", "image-panel.js", "app.js"]) {
+      for (const file of ["pptx-text.js", "docx-text.js", "pdf-rewrite.js", "pdf-text.js", "image-text.js", "image-panel.js", "app.js"]) {
         await new Promise((resolve, reject) => {
           const script = document.createElement("script");
           script.src = `${file}?v=${encodeURIComponent(version)}`;

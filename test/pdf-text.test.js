@@ -166,3 +166,22 @@ test("fitBlock widens toward the page edge before stacking a narrow column", () 
   assert.ok(wide.lines.length < narrow.lines.length);
   assert.equal(wide.width, 400);
 });
+
+test("rewrites the page so the original text is gone, keeping the rest in place", async () => {
+  const bytes = await buildPdf();
+  const extracted = await extractPdfTexts(await openPdf(bytes));
+  const result = await injectPdfTexts(bytes, {
+    uid_0002: "Paragraphe traduit.",
+    uid_0003: "Gauche",
+  }, extracted.metadata, { PDFLib });
+  assert.deepEqual(result.covered, []);
+  const again = await extractPdfTexts(await openPdf(result.bytes));
+  assert.doesNotMatch(again.text, /first line of a paragraph/);
+  assert.doesNotMatch(again.text, /Left cell/);
+  assert.match(again.text, /Paragraphe traduit\./);
+  assert.match(again.text, /Gauche/);
+  const right = again.metadata.find((m) => m.text === "Right cell");
+  assert.equal(right.x, 300);
+  assert.equal(right.firstBaseline, 200);
+  assert.ok(again.metadata.some((m) => m.text === "Quarterly Report"));
+});
