@@ -23,11 +23,25 @@ const titleCustomFont = document.getElementById("titleCustomFont");
 const bodyCustomFont = document.getElementById("bodyCustomFont");
 const titleFontPreview = document.getElementById("titleFontPreview");
 const bodyFontPreview = document.getElementById("bodyFontPreview");
+const imageTools = document.getElementById("imageTools");
+const pdfOutputRow = document.getElementById("pdfOutputRow");
+const pdfOutputSelect = document.getElementById("pdfOutputSelect");
+const pdfOutputNote = document.getElementById("pdfOutputNote");
+const fontNote = document.getElementById("fontNote");
+const fontRow = document.getElementById("fontRow");
 
 const KEEP_VALUE = "";
 const CUSTOM_VALUE = "__custom__";
 
 const PROMPT_STORAGE_KEY = "ppt-translation-supporter:prompt";
+
+// PDF libraries load only when a PDF is dropped.
+const PDFJS_URL = "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs";
+const PDFJS_WORKER_URL = "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs";
+const PDF_LIB_URL = "https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js";
+const PDF_LIB_SRI = "sha384-weMABwrltA6jWR8DDe9Jp5blk+tZQh7ugpCsF3JwSA53WZM9/14PjS5LAJNHNjAI";
+const FONTKIT_URL = "https://cdn.jsdelivr.net/npm/@pdf-lib/fontkit@1.1.1/dist/fontkit.umd.min.js";
+const FONTKIT_SRI = "sha384-2p6U+1mmqF10USehFeRiyG2ESG9FwIqN+jxULn5w9jjQIihSn9Pt13dVCn/Hawjn";
 
 let sourceFile = null;
 let sourceKind = "pptx";
@@ -39,6 +53,13 @@ let resultBlob = null;
 let resultName = "";
 let busy = false;
 let deckFonts = [];
+// PDF: the pdf.js document (for page renders) and the original bytes.
+let sourcePdf = null;
+let pdfBytes = null;
+let pdfColors = null;
+let pdfjsPromise = null;
+let pdfLibPromise = null;
+let pdfFontPromise = null;
 
 function show(el, text, className) {
   if (!text) {
@@ -222,8 +243,89 @@ function isDocxName(name) {
   return /\.docx$/i.test(name || "");
 }
 
+function isPdfName(name) {
+  return /\.pdf$/i.test(name || "");
+}
+
 function isSourceName(name) {
-  return /\.(pptx|docx)$/i.test(name || "");
+  return /\.(pptx|docx|pdf)$/i.test(name || "");
+}
+
+function kindOf(name) {
+  if (isDocxName(name)) return "docx";
+  if (isPdfName(name)) return "pdf";
+  return "pptx";
+}
+
+function loadScript(src, integrity) {
+  return new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = src;
+    if (integrity) script.integrity = integrity;
+    script.crossOrigin = "anonymous";
+    script.onload = resolve;
+    script.onerror = () => reject(new Error(`${src} を読み込めませんでした`));
+    document.head.appendChild(script);
+  });
+}
+
+// A failed load is forgotten so the next attempt can retry.
+function once(getPromise, setPromise, start) {
+  let promise = getPromise();
+  if (!promise) {
+    promise = start();
+    setPromise(promise);
+    promise.catch(() => setPromise(null));
+  }
+  return promise;
+}
+
+function loadPdfjs() {
+  return once(() => pdfjsPromise, (p) => { pdfjsPromise = p; }, async () => {
+    const lib = await import(PDFJS_URL);
+    lib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER_URL;
+    return lib;
+  });
+}
+
+function loadPdfLib() {
+  return once(() => pdfLibPromise, (p) => { pdfLibPromise = p; }, async () => {
+    if (!window.PDFLib) await loadScript(PDF_LIB_URL, PDF_LIB_SRI);
+    if (!window.fontkit) await loadScript(FONTKIT_URL, FONTKIT_SRI);
+    return { PDFLib: window.PDFLib, fontkit: window.fontkit };
+  });
+}
+
+function loadPdfFont() {
+  return once(() => pdfFontPromise, (p) => { pdfFontPromise = p; }, async () => {
+    const res = await fetch(PDF_FONT_URL);
+    if (!res.ok) throw new Error(`フォントを読み込めませんでした（${res.status}）`);
+    return res.arrayBuffer();
+  });
+}
+
+function pdfOutput() {
+  return pdfOutputSelect.value === "docx" ? "docx" : "pdf";
+}
+
+// PDF overlay embeds its own font, so the pickers only matter for Word output.
+function syncOutputUi() {
+  const isPdf = sourceKind === "pdf";
+  const overlay = isPdf && pdfOutput() === "pdf";
+  imageTools.hidden = isPdf;
+  pdfOutputRow.hidden = !isPdf;
+  pdfOutputNote.hidden = !isPdf;
+  pdfOutputNote.textContent = overlay
+    ? `元のページの文字を背景色で覆い、その上に訳文を ${PDF_FONT_NAME} で書きます。枠に収まらない訳文は小さくなります。初回はフォント（約 5MB）を読み込みます。覆った下に原文が残るため、PDF 内の検索やコピーでは原文も拾われます。`
+    : "ページ順に、訳文を1ブロック1段落で並べた Word 文書を作ります。図や表のレイアウトは引き継ぎません。";
+  fontNote.hidden = overlay;
+  fontRow.hidden = overlay;
+}
+
+function outputName() {
+  const name = sourceFile.name;
+  if (sourceKind !== "pdf") return translatedOutputName(name);
+  return `${name.replace(/\.pdf$/i, "")}_translated.${pdfOutput()}`;
 }
 
 function kindLabel() {
@@ -246,24 +348,29 @@ async function handlePptx(file) {
   if (busy) return;
   clearMessages();
   if (!isSourceName(file.name)) {
-    show(errorMsg, "ファイル（.pptx または .docx）を置いてください。");
+    show(errorMsg, "ファイル（.pptx、.docx、.pdf）を置いてください。");
     return;
   }
   // a new deck means the previous one's extract, translation and result go
   clearDeckState();
   sourceFile = file;
-  sourceKind = isDocxName(file.name) ? "docx" : "pptx";
+  sourceKind = kindOf(file.name);
   try {
     setBusy(true, `${file.name} を読み込み中…`);
-    sourceZip = await JSZip.loadAsync(await file.arrayBuffer());
-    setProgress("テキストを抽出中…");
-    extracted = sourceKind === "docx"
-      ? await extractDocxTexts(sourceZip)
-      : await extractTextsFromZip(sourceZip);
-    deckFonts = sourceKind === "docx"
-      ? await collectDocxFonts(sourceZip)
-      : await collectFontsFromZip(sourceZip);
+    if (sourceKind === "pdf") {
+      await readPdf(file);
+    } else {
+      sourceZip = await JSZip.loadAsync(await file.arrayBuffer());
+      setProgress("テキストを抽出中…");
+      extracted = sourceKind === "docx"
+        ? await extractDocxTexts(sourceZip)
+        : await extractTextsFromZip(sourceZip);
+      deckFonts = sourceKind === "docx"
+        ? await collectDocxFonts(sourceZip)
+        : await collectFontsFromZip(sourceZip);
+    }
   } catch (err) {
+    extracted = null;
     logError(`${kindLabel()} の抽出`, err);
     show(errorMsg, `抽出に失敗しました: ${err.message || err}`);
     return;
@@ -278,6 +385,7 @@ async function handlePptx(file) {
   promptBox.value = loadStoredPrompt() || defaultPrompt();
   extractBox.value = extracted.text;
   resetFontPickers(deckFonts);
+  syncOutputUi();
   setStepState(step1, "is-done");
   step2.hidden = false;
   setStepState(step2, "");
@@ -287,6 +395,52 @@ async function handlePptx(file) {
   setStepState(step4, "is-wait");
   txtMeta.hidden = true;
   show(okMsg, "抽出しました。プロンプトと本文をコピーして翻訳し、訳文をドロップまたは貼り付けてください。");
+}
+
+async function readPdf(file) {
+  const pdfjs = await loadPdfjs();
+  pdfBytes = await file.arrayBuffer();
+  // pdf.js takes ownership of the buffer it is given, so hand it a copy
+  try {
+    sourcePdf = await pdfjs.getDocument({ data: new Uint8Array(pdfBytes.slice(0)), isEvalSupported: false }).promise;
+  } catch (err) {
+    if (err && err.name === "PasswordException") {
+      throw new Error("パスワード付きの PDF は開けません", { cause: err });
+    }
+    throw err;
+  }
+  extracted = await extractPdfTexts(sourcePdf, (page, total) => setProgress(`テキストを抽出中… ${page} / ${total} ページ`));
+  if (!extracted.uidCount) {
+    throw new Error("テキストが見つかりませんでした。スキャンした画像だけの PDF は対象外です");
+  }
+  deckFonts = [];
+}
+
+async function writePdfResult(translations, fonts) {
+  if (pdfOutput() === "docx") {
+    setProgress("Word 文書を作成中…");
+    const built = buildDocxFromPdf(JSZip, extracted, translations, fonts);
+    const blob = await built.zip.generateAsync(
+      { type: "blob", compression: "DEFLATE", compressionOptions: { level: 6 } },
+      (meta) => setProgress(`Word 文書を生成中… ${Math.round(meta.percent)}%`)
+    );
+    return { blob, result: built };
+  }
+  setProgress("PDF 用のライブラリとフォントを読み込み中…");
+  const [{ PDFLib, fontkit }, fontBytes] = await Promise.all([loadPdfLib(), loadPdfFont()]);
+  if (!pdfColors) {
+    pdfColors = await samplePdfColors(sourcePdf, extracted.metadata, (page, total) => (
+      setProgress(`背景色を調べています… ${page} / ${total} ページ`)
+    ));
+  }
+  setProgress("訳文を書き込み中…");
+  const result = await injectPdfTexts(pdfBytes.slice(0), translations, extracted.metadata, {
+    PDFLib,
+    fontkit,
+    fontBytes,
+    colors: pdfColors,
+  });
+  return { blob: new Blob([result.bytes], { type: "application/pdf" }), result };
 }
 
 async function handleTxt(file) {
@@ -316,7 +470,7 @@ async function sourceBytes() {
 async function applyTranslation(source, sourceLabel) {
   if (busy) return;
   clearMessages();
-  if (!sourceZip || !extracted) {
+  if ((!sourceZip && !sourcePdf) || !extracted) {
     show(errorMsg, "先にファイルを置いてください。");
     return;
   }
@@ -355,25 +509,31 @@ async function applyTranslation(source, sourceLabel) {
 
   try {
     setBusy(true, `${kindLabel()} を読み込み中…`);
-    const zip = await JSZip.loadAsync(await sourceBytes());
-    setProgress("訳文を書き戻し中…");
     const fonts = {
       titleFont: fontFromPicker(titleFontSelect, titleCustomFont),
       bodyFont: fontFromPicker(bodyFontSelect, bodyCustomFont),
     };
-    const result = sourceKind === "docx"
-      ? await injectDocxTexts(zip, translations, extracted.metadata, fonts)
-      : await injectTextsToZip(zip, translations, extracted.metadata, fonts);
-    const blob = await zip.generateAsync(
-      {
-        type: "blob",
-        compression: "DEFLATE",
-        compressionOptions: { level: 6 },
-      },
-      (meta) => setProgress(`${kindLabel()} を生成中… ${Math.round(meta.percent)}%`)
-    );
+    let blob;
+    let result;
+    if (sourceKind === "pdf") {
+      ({ blob, result } = await writePdfResult(translations, fonts));
+    } else {
+      const zip = await JSZip.loadAsync(await sourceBytes());
+      setProgress("訳文を書き戻し中…");
+      result = sourceKind === "docx"
+        ? await injectDocxTexts(zip, translations, extracted.metadata, fonts)
+        : await injectTextsToZip(zip, translations, extracted.metadata, fonts);
+      blob = await zip.generateAsync(
+        {
+          type: "blob",
+          compression: "DEFLATE",
+          compressionOptions: { level: 6 },
+        },
+        (meta) => setProgress(`${kindLabel()} を生成中… ${Math.round(meta.percent)}%`)
+      );
+    }
     resultBlob = blob;
-    resultName = translatedOutputName(sourceFile.name);
+    resultName = outputName();
     const flattened = result.flattened || [];
     resultMeta.textContent = `${resultName} · 書き戻し ${result.injected} 件` +
       (result.missing ? ` · スキップ ${result.missing} 件` : "") +
@@ -389,6 +549,13 @@ async function applyTranslation(source, sourceLabel) {
       notes.push(
         `タグ（[0]...[/0]）が原文と一致しないため、${flattened.length} 件は段落内の書式（色分けなど）を維持できませんでした: ` +
         `${flattened.slice(0, 8).join(", ")}${flattened.length > 8 ? " …" : ""}`
+      );
+    }
+    const overflowed = result.overflowed || [];
+    if (overflowed.length) {
+      notes.push(
+        `${overflowed.length} 件の訳文は元の枠に収まらず、枠の外まで書いています: ` +
+        `${overflowed.slice(0, 8).join(", ")}${overflowed.length > 8 ? " …" : ""}`
       );
     }
     const artifacts = result.tagArtifacts || [];
@@ -420,6 +587,10 @@ function clearDeckState() {
   if (typeof resetImageTools === "function") resetImageTools();
   extracted = null;
   sourceZip = null;
+  if (sourcePdf) sourcePdf.destroy().catch(() => {});
+  sourcePdf = null;
+  pdfBytes = null;
+  pdfColors = null;
   sourceKind = "pptx";
   deckEdited = false;
   resultBlob = null;
@@ -433,6 +604,8 @@ function clearDeckState() {
   extractBox.value = "";
   pasteBox.value = "";
   resetFontPickers([]);
+  pdfOutputSelect.value = "pdf";
+  syncOutputUi();
   step2.hidden = true;
   step3.hidden = true;
   step4.hidden = true;
@@ -486,7 +659,21 @@ document.getElementById("downloadPptxBtn").addEventListener("click", () => {
 });
 document.getElementById("resetBtn").addEventListener("click", resetAll);
 
+pdfOutputSelect.addEventListener("change", () => {
+  syncOutputUi();
+  // a result for the other format is stale now
+  if (resultBlob) {
+    resultBlob = null;
+    resultName = "";
+    resultMeta.textContent = "";
+    step4.hidden = true;
+    setStepState(step4, "is-wait");
+    setStepState(step3, "");
+  }
+});
+
 resetFontPickers([]);
+syncOutputUi();
 bindFontPicker(titleFontSelect, titleCustomFont, titleFontPreview);
 bindFontPicker(bodyFontSelect, bodyCustomFont, bodyFontPreview);
 

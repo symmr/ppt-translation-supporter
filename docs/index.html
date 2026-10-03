@@ -400,12 +400,13 @@
     .ocr-status-row[hidden] { display: none; }
     .ocr-status-row .meta { margin: 0; }
     #fileInput, #txtInput { display: none; }
+    #imageTools[hidden], .opt-row[hidden] { display: none; }
   </style>
 </head>
 <body>
   <main>
     <h1>PPT/DOC Translation Supporter</h1>
-    <p class="lede">ブラウザ内で PowerPoint（.pptx）または Word（.docx）のテキストを抽出し、翻訳文を書き戻します。<strong>翻訳自体はこのツールでは行いません。</strong>抽出したプロンプトと本文を ChatGPT や Claude などの LLM に渡し、返ってきた訳文をこのツールで書き戻してください。ファイルはサーバに送られません。</p>
+    <p class="lede">ブラウザ内で PowerPoint（.pptx）、Word（.docx）、PDF（.pdf）のテキストを抽出し、翻訳文を書き戻します。<strong>翻訳自体はこのツールでは行いません。</strong>抽出したプロンプトと本文を ChatGPT や Claude などの LLM に渡し、返ってきた訳文をこのツールで書き戻してください。ファイルはサーバに送られません。</p>
 
     <section class="step" id="step1">
       <div class="step-head">
@@ -424,10 +425,12 @@
         <span class="step-num">2</span>
         <h2>テキスト抽出とプロンプト</h2>
       </div>
-      <div class="row">
-        <button type="button" id="openImageBtn">画像からテキスト抽出</button>
+      <div id="imageTools">
+        <div class="row">
+          <button type="button" id="openImageBtn">画像からテキスト抽出</button>
+        </div>
+        <p class="meta">画像を選択してください。自動抽出を押すとテキストを読み、テキストボックスとして被せます</p>
       </div>
-      <p class="meta">画像を選択してください。自動抽出を押すとテキストを読み、テキストボックスとして被せます</p>
       <div id="imagePanel" hidden>
         <div id="imageList" class="image-list"></div>
         <div id="imagePager" class="image-pager" hidden>
@@ -506,8 +509,18 @@
         <span class="step-num">3</span>
         <h2>翻訳したテキストを渡す</h2>
       </div>
-      <p class="meta">書き戻すときにフォントを指定できます。既定は Noto Sans JP です。元のファイルのフォントをそのまま使う場合は「指定しない」を選んでください。</p>
-      <div class="opt-row">
+      <div class="opt-row" id="pdfOutputRow" hidden>
+        <div class="opt">
+          <label for="pdfOutputSelect">出力形式</label>
+          <select id="pdfOutputSelect">
+            <option value="pdf">PDF（元のページに訳文を重ねる）</option>
+            <option value="docx">Word（.docx、訳文を段落として並べる）</option>
+          </select>
+        </div>
+      </div>
+      <p class="meta" id="pdfOutputNote" hidden></p>
+      <p class="meta" id="fontNote">書き戻すときにフォントを指定できます。既定は Noto Sans JP です。元のファイルのフォントをそのまま使う場合は「指定しない」を選んでください。</p>
+      <div class="opt-row" id="fontRow">
         <div class="opt">
           <label for="titleFontSelect">タイトル</label>
           <select id="titleFontSelect"></select>
@@ -550,7 +563,7 @@
       </div>
     </section>
 
-    <input id="fileInput" type="file" accept=".pptx,.docx,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.openxmlformats-officedocument.wordprocessingml.document">
+    <input id="fileInput" type="file" accept=".pptx,.docx,.pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf">
     <input id="txtInput" type="file" accept=".txt,text/plain">
 
     <p class="disclaimer">
@@ -577,7 +590,7 @@
           if (data.version) version = data.version;
         }
       } catch (_) {}
-      for (const file of ["pptx-text.js", "docx-text.js", "image-text.js", "image-panel.js", "app.js"]) {
+      for (const file of ["pptx-text.js", "docx-text.js", "pdf-text.js", "image-text.js", "image-panel.js", "app.js"]) {
         await new Promise((resolve, reject) => {
           const script = document.createElement("script");
           script.src = `${file}?v=${encodeURIComponent(version)}`;
