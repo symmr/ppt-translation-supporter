@@ -25,18 +25,76 @@ function isCjk(ch) {
   return CJK_RE.test(ch || "");
 }
 
-function joinPieces(left, right, spaced) {
-  if (!left) return right;
-  if (!right) return left;
-  if (!spaced || /\s$/.test(left) || /^\s/.test(right)) return left + right;
-  if (isCjk(left.slice(-1)) || isCjk(right[0])) return left + right;
-  return `${left} ${right}`;
+// A block's text is kept as runs: { text, style } where style is a key for
+// "same color, same link". Blocks with more than one run are tagged like
+// PPTX paragraphs ([0]...[/0]) so the translation can keep the colors.
+function runsText(runs) {
+  return runs.map((r) => r.text).join("");
 }
 
-function joinLines(prev, next) {
-  if (/[A-Za-z]-$/.test(prev) && /^[a-z]/.test(next)) return prev.slice(0, -1) + next;
-  if (isCjk(prev.slice(-1)) || isCjk(next[0])) return prev + next;
-  return `${prev} ${next}`;
+function pushRun(runs, text, style) {
+  if (!text) return;
+  const last = runs[runs.length - 1];
+  if (last && last.style === style) last.text += text;
+  else runs.push({ text, style });
+}
+
+function lastChar(runs) {
+  for (let i = runs.length - 1; i >= 0; i -= 1) if (runs[i].text) return runs[i].text.slice(-1);
+  return "";
+}
+
+// How "styled" a run is: a link outranks a color, a color outranks plain.
+function styleWeight(style) {
+  const [color, link] = String(style || "").split("|");
+  return (link ? 2 : 0) + (color && color !== "000000" ? 1 : 0);
+}
+
+// A space between two runs goes to the plainer one, so "manual" is the link
+// and not "manual ".
+function spaceStyle(before, after) {
+  if (after === undefined) return before;
+  return styleWeight(after) < styleWeight(before) ? after : before;
+}
+
+function joinPieces(runs, pieces, spaced) {
+  const left = lastChar(runs);
+  const right = (pieces[0] && pieces[0].text[0]) || "";
+  if (left && right && spaced && !/\s/.test(left) && !/\s/.test(right) && !isCjk(left) && !isCjk(right)) {
+    pushRun(runs, " ", spaceStyle(runs[runs.length - 1].style, pieces[0].style));
+  }
+  for (const piece of pieces) pushRun(runs, piece.text, piece.style);
+}
+
+function joinLines(runs, next) {
+  const prev = runsText(runs);
+  const first = runsText(next);
+  if (/[A-Za-z]-$/.test(prev) && /^[a-z]/.test(first)) {
+    const last = runs[runs.length - 1];
+    last.text = last.text.slice(0, -1);
+  } else if (!isCjk(prev.slice(-1)) && !isCjk(first[0])) {
+    pushRun(runs, " ", spaceStyle(runs[runs.length - 1].style, next[0] && next[0].style));
+  }
+  for (const run of next) pushRun(runs, run.text, run.style);
+}
+
+// Collapses whitespace across run boundaries, trims the ends and drops
+// empty runs.
+function normalizeRuns(runs) {
+  const out = [];
+  let prevSpace = true;
+  for (const run of runs) {
+    let text = "";
+    for (const ch of run.text.replace(/\s/g, " ")) {
+      if (ch === " " && prevSpace) continue;
+      text += ch;
+      prevSpace = ch === " ";
+    }
+    pushRun(out, text, run.style);
+  }
+  while (out.length && /^ *$/.test(out[out.length - 1].text)) out.pop();
+  if (out.length) out[out.length - 1].text = out[out.length - 1].text.replace(/ +$/, "");
+  return out.filter((r) => r.text);
 }
 
 function horizontal(transform) {
@@ -46,15 +104,17 @@ function horizontal(transform) {
 
 // pdf.js text items to lines: items that sit on one baseline and follow each
 // other closely. A wide gap (table columns, tab stops) starts a new line so
-// the cells stay separate blocks.
-function itemsToLines(items, styles) {
+// the cells stay separate blocks. styler(item, x, y, size) splits an item's
+// string into styled pieces; without one every item is one plain piece.
+function itemsToLines(items, styles, styler) {
   const lines = [];
   let line = null;
   let pendingSpace = false;
   const close = () => {
-    if (line && line.text.trim()) {
-      line.text = line.text.replace(/\s+/g, " ").trim();
-      lines.push(line);
+    if (line) {
+      line.runs = normalizeRuns(line.runs);
+      line.text = runsText(line.runs);
+      if (line.text) lines.push(line);
     }
     line = null;
     pendingSpace = false;
@@ -83,6 +143,7 @@ function itemsToLines(items, styles) {
       const near = gap > -0.5 * line.size && gap < 1.5 * Math.max(size, line.size);
       if (!sameBaseline || !near) close();
     }
+    const pieces = styler ? styler(item, x, y, size) : [{ text: str, style: "" }];
     if (!line) {
       line = {
         x0: x,
@@ -91,11 +152,11 @@ function itemsToLines(items, styles) {
         size,
         ascent: typeof style.ascent === "number" && style.ascent > 0 ? style.ascent : 0.8,
         descent: typeof style.descent === "number" ? Math.abs(style.descent) : 0.2,
-        text: str,
+        runs: [],
       };
+      for (const piece of pieces) pushRun(line.runs, piece.text, piece.style);
     } else {
-      const spaced = pendingSpace || x - line.x1 > 0.18 * line.size;
-      line.text = joinPieces(line.text, str, spaced);
+      joinPieces(line.runs, pieces, pendingSpace || x - line.x1 > 0.18 * line.size);
       line.x1 = Math.max(line.x1, x + (item.width || 0));
       line.size = Math.max(line.size, size);
     }
@@ -111,6 +172,11 @@ function itemsToLines(items, styles) {
 function linesToBlocks(lines) {
   const blocks = [];
   let block = null;
+  const finish = () => {
+    block.runs = normalizeRuns(block.runs);
+    block.text = runsText(block.runs);
+    blocks.push(block);
+  };
   for (const line of lines) {
     if (block) {
       const ratio = line.size / block.size;
@@ -123,7 +189,7 @@ function linesToBlocks(lines) {
         overlaps && indentOk && pitchOk;
       if (joins) {
         block.leading = block.leading || dy;
-        block.text = joinLines(block.text, line.text);
+        joinLines(block.runs, line.runs);
         block.x0 = Math.min(block.x0, line.x0);
         block.x1 = Math.max(block.x1, line.x1);
         block.bottom = Math.min(block.bottom, line.y - line.descent * line.size);
@@ -131,7 +197,7 @@ function linesToBlocks(lines) {
         block.lineCount += 1;
         continue;
       }
-      blocks.push(block);
+      finish();
     }
     block = {
       x0: line.x0,
@@ -143,10 +209,10 @@ function linesToBlocks(lines) {
       size: line.size,
       leading: 0,
       lineCount: 1,
-      text: line.text,
+      runs: line.runs.map((r) => ({ ...r })),
     };
   }
-  if (block) blocks.push(block);
+  if (block) finish();
   return blocks;
 }
 
@@ -160,8 +226,85 @@ function median(values) {
   return sorted[Math.floor(sorted.length / 2)];
 }
 
-// pdf: a pdf.js PDFDocumentProxy.
-async function extractPdfTexts(pdf, onPage) {
+// Style of each character of a pdf.js item, from the strings the content
+// stream shows there (fill color) and the link annotations over it.
+// segments: from collectTextSegments; links: [{ rect, url, dest }].
+function makeStyler(segments, links, styleTable) {
+  const keyOf = (color, link) => {
+    const key = `${color || ""}|${link < 0 ? "" : link}`;
+    if (!styleTable.has(key)) {
+      styleTable.set(key, { color: color || null, link: link < 0 ? null : links[link] });
+    }
+    return key;
+  };
+  return (item, x, y, size) => {
+    const chars = Array.from(String(item.str));
+    const width = item.width || 0;
+    const onLine = segments.filter((s) => Math.abs(s.y0 - y) < 0.35 * size);
+    // strings that start inside the item; else the one drawn over its middle
+    let segs = onLine.filter((s) => s.x0 >= x - 0.5 && s.x0 < x + width - 0.05);
+    if (!segs.length) {
+      const mid = x + width / 2;
+      segs = onLine.filter((s) => s.x0 <= mid && s.x1 >= mid).slice(-1);
+    }
+    segs.sort((p, q) => p.x0 - q.x0);
+    const colors = new Array(chars.length).fill(null);
+    const total = segs.reduce((n, s) => n + s.count, 0);
+    let exact = false;
+    if (segs.length && total === chars.length) {
+      let i = 0;
+      for (const seg of segs) for (let k = 0; k < seg.count; k += 1) colors[i++] = seg.color;
+      exact = true;
+    } else if (segs.length) {
+      chars.forEach((_, i) => {
+        const cx = x + ((i + 0.5) / chars.length) * width;
+        let best = segs[0];
+        let bestDist = Infinity;
+        for (const seg of segs) {
+          const dist = cx < seg.x0 ? seg.x0 - cx : cx > seg.x1 ? cx - seg.x1 : 0;
+          if (dist < bestDist) { best = seg; bestDist = dist; }
+        }
+        colors[i] = best.color;
+      });
+    }
+    const linkOf = chars.map((_, i) => {
+      const cx = x + ((i + 0.5) / Math.max(1, chars.length)) * width;
+      const cy = y + size * 0.3;
+      return links.findIndex(({ rect }) => cx >= Math.min(rect[0], rect[2]) && cx <= Math.max(rect[0], rect[2]) &&
+        cy >= Math.min(rect[1], rect[3]) - 1 && cy <= Math.max(rect[1], rect[3]) + 1);
+    });
+    const keys = chars.map((_, i) => keyOf(colors[i], linkOf[i]));
+    // Positions estimated from widths can land a character off; styled spans
+    // nearly always start and end at a space, so snap boundaries to one.
+    if (!exact || links.length) {
+      for (let b = 1; b < keys.length; b += 1) {
+        if (keys[b] === keys[b - 1] || chars[b] === " " || chars[b - 1] === " ") continue;
+        for (const d of [1, -1, 2, -2]) {
+          const k = b + d;
+          if (k <= 0 || k >= keys.length) continue;
+          if (chars[k] !== " " && chars[k - 1] !== " ") continue;
+          if (k < b) for (let i = k; i < b; i += 1) keys[i] = keys[b];
+          else for (let i = b; i < k; i += 1) keys[i] = keys[b - 1];
+          break;
+        }
+      }
+    }
+    const pieces = [];
+    chars.forEach((ch, i) => pushRun(pieces, ch, keys[i]));
+    return pieces;
+  };
+}
+
+function taggedText(runs) {
+  if (runs.length <= 1) return runsText(runs);
+  return runs.map((r, i) => `[${i}]${r.text}[/${i}]`).join("");
+}
+
+// pdf: a pdf.js PDFDocumentProxy. options.segmentsFor(pageIndex) returns the
+// page's shown strings (collectTextSegments) for colors; without it every
+// block is one plain run.
+async function extractPdfTexts(pdf, onPage, options) {
+  const opts = options || {};
   const texts = [];
   const metadata = [];
   const pages = [];
@@ -172,11 +315,29 @@ async function extractPdfTexts(pdf, onPage) {
     const content = await page.getTextContent();
     const [vx0, vy0, vx1, vy1] = page.view;
     pages.push({ width: vx1 - vx0, height: vy1 - vy0 });
-    for (const block of linesToBlocks(itemsToLines(content.items, content.styles))) {
+    let segments = [];
+    if (opts.segmentsFor) {
+      try {
+        segments = (await opts.segmentsFor(index)) || [];
+      } catch (_) {
+        segments = [];
+      }
+    }
+    let links = [];
+    try {
+      links = (await page.getAnnotations())
+        .filter((a) => a.subtype === "Link" && Array.isArray(a.rect) && (a.url || a.dest || a.action))
+        .map((a) => ({ rect: a.rect.map(round2), url: a.url || null }));
+    } catch (_) {
+      links = [];
+    }
+    const styleTable = new Map();
+    const styler = segments.length || links.length ? makeStyler(segments, links, styleTable) : null;
+    for (const block of linesToBlocks(itemsToLines(content.items, content.styles, styler))) {
       const uid = `uid_${String(uidNum).padStart(4, "0")}`;
       uidNum += 1;
       texts.push(uid);
-      texts.push(block.text);
+      texts.push(taggedText(block.runs));
       metadata.push({
         id: uid,
         type: "pdf",
@@ -190,6 +351,7 @@ async function extractPdfTexts(pdf, onPage) {
         lines: block.lineCount,
         firstBaseline: round2(block.firstY),
         text: block.text,
+        runs: block.runs.map((r) => ({ text: r.text, ...(styleTable.get(r.style) || { color: null, link: null }) })),
         title: false,
       });
     }
@@ -209,63 +371,117 @@ async function extractPdfTexts(pdf, onPage) {
   };
 }
 
+// Translation text plus the run index of every character. Tags that match
+// the block's runs one to one keep the styles; anything else is flattened
+// into the run with the most text.
+function styledText(meta, translated) {
+  const runs = meta.runs && meta.runs.length ? meta.runs : [{ text: meta.text, color: null, link: null }];
+  const raw = String(translated).replace(/\s+$/, "");
+  if (runs.length <= 1) {
+    return { text: raw, styles: new Array(raw.length).fill(0), flattened: false, tagArtifact: TAG_LIKE_RE.test(raw) };
+  }
+  const re = /\[(\d+)\]([\s\S]*?)\[\/\1\]/g;
+  const matches = [];
+  let m;
+  while ((m = re.exec(raw)) !== null) matches.push({ index: Number(m[1]), text: m[2], start: m.index, end: m.index + m[0].length });
+  const seen = new Set(matches.map((x) => x.index));
+  const valid = matches.length === runs.length && seen.size === runs.length &&
+    [...seen].every((i) => i >= 0 && i < runs.length);
+  if (!valid) {
+    const text = raw.replace(/(?:\[\/?\d+\]|⟦\/?\d+⟧)/g, "");
+    let main = 0;
+    runs.forEach((r, i) => { if (r.text.length > runs[main].text.length) main = i; });
+    return { text, styles: new Array(text.length).fill(main), flattened: true, tagArtifact: false };
+  }
+  let text = "";
+  const styles = [];
+  const add = (str, style) => {
+    text += str;
+    for (let i = 0; i < str.length; i += 1) styles.push(style);
+  };
+  let pos = 0;
+  matches.forEach((match, k) => {
+    const gap = raw.slice(pos, match.start);
+    add(gap, k === 0 ? match.index : matches[k - 1].index);
+    add(match.text, match.index);
+    pos = match.end;
+  });
+  add(raw.slice(pos), matches[matches.length - 1].index);
+  return { text, styles, flattened: false, tagArtifact: false };
+}
+
 // Break into wrap units: one CJK character, or a Latin word with the spaces
 // after it. Closing punctuation sticks to the unit before it.
-function wrapUnits(text) {
+// Returns [{ start, end }] offsets into text.
+function wrapUnits(text, offset) {
   const units = [];
   const re = /[A-Za-z0-9À-ɏ'’\-_.,:;/@#%&+=*!?()]+\s*|\s+|[\s\S]/g;
   let match;
   while ((match = re.exec(text)) !== null) {
-    const unit = match[0];
+    const unit = { start: offset + match.index, end: offset + match.index + match[0].length };
     const prev = units[units.length - 1];
-    if (prev && (NO_LINE_START_RE.test(unit[0]) || NO_LINE_END_RE.test(prev.slice(-1)))) {
-      units[units.length - 1] = prev + unit;
-    } else {
-      units.push(unit);
-    }
+    const prevLast = prev ? text[prev.end - offset - 1] : "";
+    if (prev && (NO_LINE_START_RE.test(match[0][0]) || NO_LINE_END_RE.test(prevLast))) prev.end = unit.end;
+    else units.push(unit);
   }
   return units;
 }
 
-function wrapText(text, maxWidth, measure) {
+// Line breaks as [{ start, end }] offsets into text, trailing spaces left out.
+function wrapRanges(text, maxWidth, measure) {
   const out = [];
-  for (const para of String(text).split(/\r?\n/)) {
-    let line = "";
-    for (const unit of wrapUnits(para)) {
-      const candidate = line + unit;
-      if (!line || measure(candidate.trimEnd()) <= maxWidth) {
-        line = candidate;
+  const src = String(text);
+  const trimEnd = (start, end) => {
+    while (end > start && /\s/.test(src[end - 1])) end -= 1;
+    return end;
+  };
+  let offset = 0;
+  for (const para of src.split("\n")) {
+    const body = para.replace(/\r$/, "");
+    let start = offset;
+    let end = offset;
+    for (const unit of wrapUnits(body, offset)) {
+      if (end === start || measure(src.slice(start, trimEnd(start, unit.end))) <= maxWidth) {
+        end = unit.end;
         continue;
       }
-      out.push(line.trimEnd());
-      line = unit.trimStart();
+      out.push({ start, end: trimEnd(start, end) });
+      start = unit.start;
+      while (start < unit.end && /\s/.test(src[start])) start += 1;
+      end = unit.end;
       // a single unit wider than the box: split it by character
-      while (line.length > 1 && measure(line) > maxWidth) {
-        let cut = line.length - 1;
-        while (cut > 1 && measure(line.slice(0, cut)) > maxWidth) cut -= 1;
-        out.push(line.slice(0, cut));
-        line = line.slice(cut);
+      while (end - start > 1 && measure(src.slice(start, end)) > maxWidth) {
+        let cut = end - 1;
+        while (cut > start + 1 && measure(src.slice(start, cut)) > maxWidth) cut -= 1;
+        out.push({ start, end: cut });
+        start = cut;
       }
     }
-    out.push(line.trimEnd());
+    out.push({ start, end: trimEnd(start, end) });
+    offset += para.length + 1;
   }
   return out;
+}
+
+function wrapText(text, maxWidth, measure) {
+  return wrapRanges(text, maxWidth, measure).map((r) => String(text).slice(r.start, r.end));
 }
 
 function fitWithin(text, block, measure, width) {
   const lineHeight = (size) => (block.leading > 0 ? block.leading * (size / block.size) : size * 1.2);
   const limit = block.h * 1.05 + 0.5;
   let size = block.size;
-  let lines = wrapText(text, width, (s) => measure(s, size));
+  let ranges = wrapRanges(text, width, (s) => measure(s, size));
   for (let step = 1; step <= 20; step += 1) {
-    if (size + (lines.length - 1) * lineHeight(size) <= limit) break;
+    if (size + (ranges.length - 1) * lineHeight(size) <= limit) break;
     const next = block.size * (1 - step * ((1 - MIN_SHRINK) / 20));
     if (next < block.size * MIN_SHRINK - 1e-9) break;
     size = next;
-    lines = wrapText(text, width, (s) => measure(s, size));
+    ranges = wrapRanges(text, width, (s) => measure(s, size));
   }
-  const overflow = size + (lines.length - 1) * lineHeight(size) > limit;
-  return { size, lineHeight: lineHeight(size), lines, width, overflow };
+  const overflow = size + (ranges.length - 1) * lineHeight(size) > limit;
+  const lines = ranges.map((r) => String(text).slice(r.start, r.end));
+  return { size, lineHeight: lineHeight(size), lines, ranges, width, overflow };
 }
 
 // Largest size (down to half the original) at which the wrapped text fits
@@ -308,10 +524,61 @@ function hexToRgb(PDFLib, hex, fallback) {
   return PDFLib.rgb(((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255);
 }
 
+function sameRect(a, b) {
+  return a && b && a.length === 4 && b.length === 4 && a.every((v, i) => Math.abs(v - b[i]) < 0.6);
+}
+
+// Link annotations of a page, as { index, dict, rect }.
+function pageLinkAnnots(PDFLib, page) {
+  const { PDFName, PDFArray, PDFDict, PDFNumber } = PDFLib;
+  const annots = page.node.lookupMaybe(PDFName.of("Annots"), PDFArray);
+  const out = [];
+  if (!annots) return out;
+  for (let i = 0; i < annots.size(); i += 1) {
+    const dict = annots.lookupMaybe(i, PDFDict);
+    if (!dict || dict.lookup(PDFName.of("Subtype")) !== PDFName.of("Link")) continue;
+    const rect = dict.lookupMaybe(PDFName.of("Rect"), PDFArray);
+    if (!rect || rect.size() !== 4) continue;
+    const values = [0, 1, 2, 3].map((k) => {
+      const v = rect.lookup(k);
+      return v instanceof PDFNumber ? v.asNumber() : 0;
+    });
+    out.push({ index: i, dict, rect: [Math.min(values[0], values[2]), Math.min(values[1], values[3]), Math.max(values[0], values[2]), Math.max(values[1], values[3])] });
+  }
+  return out;
+}
+
+// Moves a link: the original annotation goes, a copy goes on every piece of
+// translated text that carries the link.
+function relinkAnnotations(PDFLib, page, moves) {
+  const { PDFName, PDFArray } = PDFLib;
+  if (!moves.length) return;
+  const context = page.doc.context;
+  const annots = page.node.lookupMaybe(PDFName.of("Annots"), PDFArray);
+  if (!annots) return;
+  const existing = pageLinkAnnots(PDFLib, page);
+  const drop = new Set();
+  const added = [];
+  for (const move of moves) {
+    const found = existing.find((a) => sameRect(a.rect, move.rect));
+    if (!found) continue;
+    drop.add(found.index);
+    for (const r of move.rects) {
+      const copy = found.dict.clone(context);
+      copy.set(PDFName.of("Rect"), context.obj([r.x0, r.y0, r.x1, r.y1].map(round2)));
+      copy.delete(PDFName.of("QuadPoints"));
+      added.push(context.register(copy));
+    }
+  }
+  for (const index of [...drop].sort((a, b) => b - a)) annots.remove(index);
+  for (const ref of added) annots.push(ref);
+}
+
 // Removes the original text of each translated block from the page content
-// and draws the translation in its place. Blocks whose text cannot be removed
-// that way (form XObjects, invisible OCR text) are covered with their
-// background color instead, and their original text stays in the file.
+// and draws the translation in its place, run by run in the original colors.
+// Links move onto the translated words and their underlines are redrawn.
+// Blocks whose text cannot be removed that way (form XObjects, invisible OCR
+// text) are covered with their background color instead.
 // deps: { PDFLib, fontkit, fontBytes, colors: { uid: { fill, ink } } }
 async function injectPdfTexts(bytes, translations, metadata, deps) {
   const { PDFLib } = deps;
@@ -338,30 +605,48 @@ async function injectPdfTexts(bytes, translations, metadata, deps) {
   let missing = 0;
   const tagArtifacts = [];
   const overflowed = [];
+  const flattened = [];
   const targets = [];
   for (const meta of metadata || []) {
-    if (translations[meta.id] === undefined || !pages[meta.page]) missing += 1;
-    else targets.push(meta);
+    if (translations[meta.id] === undefined || !pages[meta.page]) {
+      missing += 1;
+      continue;
+    }
+    const styled = styledText(meta, translations[meta.id]);
+    if (styled.flattened) flattened.push(meta.id);
+    if (styled.tagArtifact) tagArtifacts.push(meta.id);
+    targets.push({ meta, styled });
   }
-  // Take the original text out of each page first; pdf-lib's own drawing is
-  // appended afterwards as a separate content stream.
+  // Take the original text (and the underlines of links that move) out of
+  // each page first; pdf-lib's own drawing is appended afterwards.
   const removed = new Set();
+  const underlined = new Set();
   const byPage = new Map();
-  for (const meta of targets) {
-    if (!byPage.has(meta.page)) byPage.set(meta.page, []);
-    byPage.get(meta.page).push(meta);
+  for (const target of targets) {
+    if (!byPage.has(target.meta.page)) byPage.set(target.meta.page, []);
+    byPage.get(target.meta.page).push(target);
   }
-  for (const [index, metas] of byPage) {
-    for (const id of rewrite.removePageText(PDFLib, pages[index], metas)) removed.add(id);
+  for (const [index, list] of byPage) {
+    const zones = [];
+    for (const { meta, styled } of list) {
+      if (styled.flattened) continue;
+      for (const run of meta.runs || []) {
+        if (run.link && !zones.some((z) => sameRect(z.rect, run.link.rect))) {
+          const [x0, y0, x1, y1] = run.link.rect;
+          zones.push({ rect: run.link.rect, x0: Math.min(x0, x1), y0: Math.min(y0, y1), x1: Math.max(x0, x1), y1: Math.max(y0, y1) });
+        }
+      }
+    }
+    const result = rewrite.removePageText(PDFLib, pages[index], list.map((t) => t.meta), zones);
+    for (const id of result.done) removed.add(id);
+    result.underlined.forEach((k) => underlined.add(`${index}:${zones[k].rect.join(",")}`));
   }
   const covered = [];
-  for (const meta of targets) {
+  const moves = new Map();
+  for (const { meta, styled } of targets) {
     const page = pages[meta.page];
-    const text = String(translations[meta.id]).replace(/\s+$/, "");
-    if (TAG_LIKE_RE.test(text)) tagArtifacts.push(meta.id);
     const color = colors[meta.id] || {};
     if (!removed.has(meta.id)) {
-      // text in a form XObject or an invisible OCR layer: cover it instead
       covered.push(meta.id);
       const pad = Math.max(1, meta.size * 0.08);
       page.drawRectangle({
@@ -372,23 +657,57 @@ async function injectPdfTexts(bytes, translations, metadata, deps) {
         color: hexToRgb(PDFLib, color.fill, "FFFFFF"),
       });
     }
+    const runs = meta.runs && meta.runs.length ? meta.runs : [{ color: null, link: null }];
     const box = page.getMediaBox();
     const maxWidth = box.x + box.width - meta.x - Math.min(36, box.width * 0.05);
-    const fit = fitBlock(text, meta, (s, size) => font.widthOfTextAtSize(s, size), maxWidth);
+    const fit = fitBlock(styled.text, meta, (s, size) => font.widthOfTextAtSize(s, size), maxWidth);
     if (fit.overflow) overflowed.push(meta.id);
-    const ink = hexToRgb(PDFLib, color.ink, "1E1E1E");
+    const fallbackInk = color.ink || "1E1E1E";
     // first baseline where the original first line sat, scaled with the size
     let baseline = meta.firstBaseline
       ? meta.y + meta.h - (meta.y + meta.h - meta.firstBaseline) * (fit.size / meta.size)
       : meta.y + meta.h - fit.size * 0.88;
-    for (const line of fit.lines) {
-      if (line) page.drawText(line, { x: meta.x, y: baseline, size: fit.size, font, color: ink });
+    for (const range of fit.ranges) {
+      let x = meta.x;
+      let i = range.start;
+      while (i < range.end) {
+        const style = styled.styles[i];
+        let j = i + 1;
+        while (j < range.end && styled.styles[j] === style) j += 1;
+        const piece = styled.text.slice(i, j);
+        const run = runs[style] || runs[0];
+        const width = font.widthOfTextAtSize(piece, fit.size);
+        const ink = hexToRgb(PDFLib, run.color, fallbackInk);
+        if (piece.trim()) page.drawText(piece, { x, y: baseline, size: fit.size, font, color: ink });
+        if (run.link && !styled.flattened && piece.trim()) {
+          const key = `${meta.page}:${run.link.rect.join(",")}`;
+          if (!moves.has(key)) moves.set(key, { page: meta.page, rect: run.link.rect, rects: [] });
+          moves.get(key).rects.push({ x0: x, y0: baseline - fit.size * 0.25, x1: x + width, y1: baseline + fit.size * 0.9 });
+          if (underlined.has(key)) {
+            page.drawRectangle({
+              x,
+              y: baseline - fit.size * 0.12,
+              width,
+              height: Math.max(0.5, fit.size * 0.06),
+              color: ink,
+            });
+          }
+        }
+        x += width;
+        i = j;
+      }
       baseline -= fit.lineHeight;
     }
     injected += 1;
   }
+  const movesByPage = new Map();
+  for (const move of moves.values()) {
+    if (!movesByPage.has(move.page)) movesByPage.set(move.page, []);
+    movesByPage.get(move.page).push(move);
+  }
+  for (const [index, list] of movesByPage) relinkAnnotations(PDFLib, pages[index], list);
   const out = await doc.save();
-  return { bytes: out, injected, missing, flattened: [], tagArtifacts, overflowed, covered };
+  return { bytes: out, injected, missing, flattened, tagArtifacts, overflowed, covered };
 }
 
 // The most common text color. A per-channel median would mix a sentence's
@@ -510,31 +829,60 @@ function buildDocxFromPdf(JSZipCtor, extracted, translations, options) {
   let injected = 0;
   let missing = 0;
   const tagArtifacts = [];
+  const flattened = [];
+  const hyperlinks = [];
   let lastPage = metadata.length ? metadata[0].page : 0;
   for (const meta of metadata) {
     const translated = translations[meta.id];
-    let text = meta.text || "";
+    let styled;
     if (translated === undefined) {
       missing += 1;
+      const runs = meta.runs && meta.runs.length ? meta.runs : [{ text: meta.text || "" }];
+      styled = { text: "", styles: [] };
+      runs.forEach((run, k) => {
+        styled.text += run.text;
+        for (let i = 0; i < run.text.length; i += 1) styled.styles.push(k);
+      });
     } else {
-      text = String(translated).replace(/\s+$/, "");
-      if (TAG_LIKE_RE.test(text)) tagArtifacts.push(meta.id);
+      styled = styledText(meta, translated);
+      if (styled.tagArtifact) tagArtifacts.push(meta.id);
+      if (styled.flattened) flattened.push(meta.id);
       injected += 1;
     }
     const pageBreak = meta.page !== lastPage;
     lastPage = meta.page;
     const halfPoints = Math.max(16, Math.min(80, Math.round(meta.size * 2)));
     const font = meta.title ? opts.titleFont : opts.bodyFont;
-    const rPr = `<w:rPr>${fontXml(font)}${meta.title ? "<w:b/>" : ""}<w:sz w:val="${halfPoints}"/><w:szCs w:val="${halfPoints}"/></w:rPr>`;
+    const runs = meta.runs && meta.runs.length ? meta.runs : [{ color: null, link: null }];
     const pPr = `<w:pPr>${pageBreak ? "<w:pageBreakBefore/>" : ""}${meta.title ? '<w:outlineLvl w:val="0"/>' : ""}<w:spacing w:after="120"/></w:pPr>`;
-    paras.push(`<w:p>${pPr}${runXml(text, rPr)}</w:p>`);
+    let body = "";
+    let i = 0;
+    while (i < styled.text.length) {
+      const style = styled.styles[i];
+      let j = i + 1;
+      while (j < styled.text.length && styled.styles[j] === style) j += 1;
+      const run = runs[style] || runs[0];
+      const color = run.color && run.color !== "000000" ? `<w:color w:val="${run.color}"/>` : "";
+      const url = !styled.flattened && run.link && run.link.url;
+      const underline = url ? '<w:u w:val="single"/>' : "";
+      const rPr = `<w:rPr>${fontXml(font)}${meta.title ? "<w:b/>" : ""}${color}${underline}<w:sz w:val="${halfPoints}"/><w:szCs w:val="${halfPoints}"/></w:rPr>`;
+      const xml = runXml(styled.text.slice(i, j), rPr);
+      if (url) {
+        hyperlinks.push(url);
+        body += `<w:hyperlink r:id="rIdLink${hyperlinks.length}">${xml}</w:hyperlink>`;
+      } else {
+        body += xml;
+      }
+      i = j;
+    }
+    paras.push(`<w:p>${pPr}${body}</w:p>`);
   }
   if (!paras.length) paras.push("<w:p/>");
   const twips = (pt) => Math.round(pt * 20);
   const sect = `<w:sectPr><w:pgSz w:w="${twips(firstPage.width)}" w:h="${twips(firstPage.height)}"${firstPage.width > firstPage.height ? ' w:orient="landscape"' : ""}/>` +
     '<w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134" w:header="567" w:footer="567" w:gutter="0"/></w:sectPr>';
   const documentXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' +
-    '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">' +
+    '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
     `<w:body>${paras.join("")}${sect}</w:body></w:document>`;
   const zip = new JSZipCtor();
   zip.file("[Content_Types].xml", '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' +
@@ -548,7 +896,11 @@ function buildDocxFromPdf(JSZipCtor, extracted, translations, options) {
     '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>' +
     "</Relationships>");
   zip.file("word/document.xml", documentXml);
-  return { zip, injected, missing, flattened: [], tagArtifacts };
+  zip.file("word/_rels/document.xml.rels", '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' +
+    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+    hyperlinks.map((url, k) => `<Relationship Id="rIdLink${k + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="${escapeXml(url)}" TargetMode="External"/>`).join("") +
+    "</Relationships>");
+  return { zip, injected, missing, flattened, tagArtifacts };
 }
 
 const api = {
@@ -558,6 +910,8 @@ const api = {
   linesToBlocks,
   extractPdfTexts,
   wrapText,
+  wrapRanges,
+  styledText,
   fitBlock,
   injectPdfTexts,
   sampleBlockColors,

@@ -16,6 +16,8 @@ const {
   buildDocxFromPdf,
 } = require("../docs/pdf-text.js");
 const { extractDocxTexts } = require("../docs/docx-text.js");
+const rewrite = require("../docs/pdf-rewrite.js");
+const { collectPageSegments } = rewrite;
 
 async function loadPdfjs() {
   return import("pdfjs-dist/legacy/build/pdf.mjs");
@@ -202,4 +204,108 @@ test("text color is the most common ink, not a mix of a sentence's colors", () =
     fill: "FFFFFF",
     ink: "141414",
   });
+});
+
+// One line in three colors, a link with an underline, and an image.
+async function buildStyledPdf() {
+  const doc = await PDFLib.PDFDocument.create();
+  const font = await doc.embedFont(PDFLib.StandardFonts.Helvetica);
+  const page = doc.addPage([600, 400]);
+  const png = await doc.embedPng(Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGP8z8DAwMDAxMDAwMDAAAANHQEDasKb6QAAAABJRU5ErkJggg==",
+    "base64"
+  ));
+  page.drawImage(png, { x: 400, y: 50, width: 100, height: 100 });
+  const parts = [["Sync is ", [0, 0, 0]], ["twice as fast", [0.86, 0.15, 0.15]], [" now.", [0, 0, 0]]];
+  let x = 50;
+  for (const [text, [r, g, b]] of parts) {
+    page.drawText(text, { x, y: 300, size: 14, font, color: PDFLib.rgb(r, g, b) });
+    x += font.widthOfTextAtSize(text, 14);
+  }
+  page.drawText("Read the ", { x: 50, y: 250, size: 14, font });
+  const linkX = 50 + font.widthOfTextAtSize("Read the ", 14);
+  const linkW = font.widthOfTextAtSize("manual", 14);
+  page.drawText("manual", { x: linkX, y: 250, size: 14, font, color: PDFLib.rgb(0, 0, 0.9) });
+  page.drawRectangle({ x: linkX, y: 247, width: linkW, height: 1, color: PDFLib.rgb(0, 0, 0.9) });
+  page.drawText(" first.", { x: linkX + linkW, y: 250, size: 14, font });
+  const link = doc.context.register(doc.context.obj({
+    Type: "Annot",
+    Subtype: "Link",
+    Rect: [linkX, 246, linkX + linkW, 264],
+    Border: [0, 0, 0],
+    A: { Type: "Action", S: "URI", URI: PDFLib.PDFString.of("https://example.com/manual") },
+  }));
+  page.node.set(PDFLib.PDFName.of("Annots"), doc.context.obj([link]));
+  return doc.save();
+}
+
+async function extractStyled(bytes) {
+  const doc = await PDFLib.PDFDocument.load(bytes);
+  const pages = doc.getPages();
+  return extractPdfTexts(await openPdf(bytes), null, {
+    segmentsFor: (index) => collectPageSegments(PDFLib, pages[index]),
+  });
+}
+
+test("tags color and link runs and keeps them through the rewrite", async () => {
+  const bytes = await buildStyledPdf();
+  const extracted = await extractStyled(bytes);
+  assert.deepEqual(extracted.lines, [
+    "uid_0001", "[0]Sync is [/0][1]twice as fast[/1][2] now.[/2]",
+    "uid_0002", "[0]Read the [/0][1]manual[/1][2] first.[/2]",
+  ]);
+  const first = extracted.metadata[0].runs;
+  assert.deepEqual(first.map((r) => r.color), ["000000", "DB2626", "000000"]);
+  assert.equal(extracted.metadata[1].runs[1].link.url, "https://example.com/manual");
+
+  const result = await injectPdfTexts(bytes, {
+    uid_0001: "[0]Sync is now [/0][1]twice as fast[/1][2].[/2]",
+    uid_0002: "[0]First read [/0][1]the guide[/1][2].[/2]",
+  }, extracted.metadata, { PDFLib });
+  assert.deepEqual(result.flattened, []);
+  assert.deepEqual(result.covered, []);
+
+  const again = await extractStyled(result.bytes);
+  assert.deepEqual(again.lines, [
+    "uid_0001", "[0]Sync is now [/0][1]twice as fast[/1][2].[/2]",
+    "uid_0002", "[0]First read [/0][1]the guide[/1][2].[/2]",
+  ]);
+  assert.equal(again.metadata[0].runs[1].color, "DB2626");
+  const out = await PDFLib.PDFDocument.load(result.bytes);
+  const page = out.getPages()[0];
+  const annots = page.node.lookup(PDFLib.PDFName.of("Annots"), PDFLib.PDFArray);
+  assert.equal(annots.size(), 1);
+  const rect = annots.lookup(0, PDFLib.PDFDict).lookup(PDFLib.PDFName.of("Rect"), PDFLib.PDFArray);
+  const x0 = rect.lookup(0).asNumber();
+  const helvetica = await out.embedFont(PDFLib.StandardFonts.Helvetica);
+  assert.ok(Math.abs(x0 - (50 + helvetica.widthOfTextAtSize("First read ", 14))) < 1);
+  // the old underline under "manual" is gone, one new one under "the guide"
+  const content = rewrite.pageContentText(PDFLib, page);
+  assert.equal((content.match(/(?:^|\s)(?:re|h)\s+f(?=\s|$)/g) || []).length, 1);
+  assert.doesNotMatch(content, /45\.766\d* 1 l/);
+  assert.equal(out.getPages()[0].node.Resources().lookup(PDFLib.PDFName.of("XObject"), PDFLib.PDFDict).keys().length, 1);
+});
+
+test("mismatched tags fall back to one run and are reported", async () => {
+  const bytes = await buildStyledPdf();
+  const extracted = await extractStyled(bytes);
+  const result = await injectPdfTexts(bytes, {
+    uid_0001: "[0]Sync is twice as fast now.[/0]",
+  }, extracted.metadata, { PDFLib });
+  assert.deepEqual(result.flattened, ["uid_0001"]);
+  const again = await extractStyled(result.bytes);
+  assert.ok(again.lines.includes("Sync is twice as fast now."));
+});
+
+test("Word output keeps run colors and hyperlinks", async () => {
+  const extracted = await extractStyled(await buildStyledPdf());
+  const result = buildDocxFromPdf(JSZip, extracted, {
+    uid_0002: "[0]まず[/0][1]ガイド[/1][2]を読む。[/2]",
+  }, {});
+  const zip = await JSZip.loadAsync(await result.zip.generateAsync({ type: "uint8array" }));
+  const xml = await zip.file("word/document.xml").async("string");
+  const rels = await zip.file("word/_rels/document.xml.rels").async("string");
+  assert.match(xml, /<w:color w:val="DB2626"\/>/);
+  assert.match(xml, /<w:hyperlink r:id="rIdLink1">.*ガイド.*<\/w:hyperlink>/);
+  assert.match(rels, /Target="https:\/\/example.com\/manual" TargetMode="External"/);
 });

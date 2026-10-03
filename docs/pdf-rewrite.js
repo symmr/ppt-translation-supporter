@@ -215,17 +215,43 @@ function inRect(rects, x, y) {
   return -1;
 }
 
-// bytes: decoded page content. rects: [{ x0, y0, x1, y1 }] in user space.
-// Returns the new content and, per rect, how many visible strings went.
-function removeTextInRects(bytes, rects, fonts) {
+function clamp01(v) {
+  return Math.max(0, Math.min(1, typeof v === "number" ? v : 0));
+}
+
+function colorHex(values) {
+  let rgb;
+  if (values.length === 1) rgb = [values[0], values[0], values[0]];
+  else if (values.length === 3) rgb = values;
+  else if (values.length === 4) {
+    const [c, m, y, k] = values.map(clamp01);
+    rgb = [(1 - c) * (1 - k), (1 - m) * (1 - k), (1 - y) * (1 - k)];
+  } else return null;
+  return rgb.map((v) => Math.round(clamp01(v) * 255).toString(16).padStart(2, "0")).join("").toUpperCase();
+}
+
+const PATH_OPS = new Set(["m", "l", "c", "v", "y", "h", "re"]);
+const PAINT_OPS = new Set(["S", "s", "f", "F", "f*", "B", "B*", "b", "b*", "n"]);
+
+// Interprets a content stream. For every string shown, onString(seg) may
+// return true to remove it (it becomes a TJ advance of the same width). For
+// every painted path, onPath(path) may return true to remove it.
+// seg: { x0, y0, x1, mx, my, size, color, visible, count, horizontal }
+// path: { ops, paint, bbox, lineWidth }
+function walkContent(bytes, fonts, handlers) {
   const ops = parseOps(bytes);
-  const hits = new Array(rects.length).fill(0);
   const edits = [];
-  let gs = { ctm: IDENTITY.slice(), Tc: 0, Tw: 0, Th: 1, TL: 0, Tfs: 0, font: null, rise: 0, Tr: 0 };
+  let gs = {
+    ctm: IDENTITY.slice(), Tc: 0, Tw: 0, Th: 1, TL: 0, Tfs: 0, font: null, rise: 0, Tr: 0, fill: "000000", lw: 1,
+  };
   const saved = [];
   let tm = IDENTITY.slice();
   let tlm = IDENTITY.slice();
+  let path = null;
+  let clip = false;
   const num = (v, d) => (typeof v === "number" ? v : d);
+  const onString = handlers.onString || (() => false);
+  const onPath = handlers.onPath || (() => false);
 
   // Shows one TJ-style array; returns the replacement elements, or null when
   // nothing in it was removed.
@@ -241,11 +267,19 @@ function removeTextInRects(bytes, rects, fonts) {
       if (!(el instanceof Uint8Array)) continue;
       const tx = stringAdvance(gs, el);
       const at = mul(tm, gs.ctm);
-      const [px, py] = apply(at, tx / 2, gs.rise + gs.Tfs * 0.3);
-      const hit = el.length ? inRect(rects, px, py) : -1;
+      const [x0, y0] = apply(at, 0, gs.rise);
+      const [x1] = apply(at, tx, gs.rise);
+      const [mx, my] = apply(at, tx / 2, gs.rise + gs.Tfs * 0.3);
       const scale = gs.Tfs * gs.Th;
-      if (hit >= 0 && scale) {
-        if (gs.Tr !== 3 && gs.Tr !== 7) hits[hit] += 1;
+      const seg = {
+        x0, y0, x1, mx, my,
+        size: Math.abs(gs.Tfs) * Math.hypot(at[2], at[3]),
+        color: gs.fill,
+        visible: gs.Tr !== 3 && gs.Tr !== 7,
+        count: codesOf(gs.font, el).length,
+        horizontal: at[0] > 0 && Math.abs(at[1]) <= at[0] * 0.02 && Math.abs(at[2]) <= Math.abs(at[3]) * 0.02,
+      };
+      if (el.length && scale && onString(seg)) {
         out.push(-(tx / scale) * 1000);
         changed = true;
       } else {
@@ -260,14 +294,50 @@ function removeTextInRects(bytes, rects, fonts) {
     tlm = mul([1, 0, 0, 1, 0, -gs.TL], tlm);
     tm = tlm.slice();
   };
+  const addPoint = (x, y) => {
+    const [ux, uy] = apply(gs.ctm, x, y);
+    const b = path.bbox;
+    b.x0 = Math.min(b.x0, ux); b.y0 = Math.min(b.y0, uy);
+    b.x1 = Math.max(b.x1, ux); b.y1 = Math.max(b.y1, uy);
+  };
+  const setFill = (values) => {
+    const hex = values.every((v) => typeof v === "number") ? colorHex(values) : null;
+    gs.fill = hex;
+  };
 
   for (const { op, operands: a, start, end } of ops) {
+    if (PATH_OPS.has(op)) {
+      if (!path) path = { start, ops: [], bbox: { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity } };
+      path.ops.push(op);
+      const n = a.map((v) => num(v, 0));
+      if (op === "re" && n.length >= 4) {
+        addPoint(n[0], n[1]); addPoint(n[0] + n[2], n[1]);
+        addPoint(n[0], n[1] + n[3]); addPoint(n[0] + n[2], n[1] + n[3]);
+      } else {
+        for (let k = 0; k + 1 < n.length; k += 2) addPoint(n[k], n[k + 1]);
+      }
+      continue;
+    }
+    if (op === "W" || op === "W*") { clip = true; continue; }
+    if (PAINT_OPS.has(op)) {
+      if (path && !clip && op !== "n") {
+        const lineWidth = gs.lw * Math.hypot(gs.ctm[0], gs.ctm[1]);
+        if (onPath({ ops: path.ops, paint: op, bbox: path.bbox, lineWidth })) edits.push({ start: path.start, end, text: "" });
+      }
+      path = null;
+      clip = false;
+      continue;
+    }
     switch (op) {
       case "q": saved.push({ ...gs, ctm: gs.ctm.slice() }); break;
       case "Q": if (saved.length) gs = saved.pop(); break;
       case "cm":
         if (a.length >= 6) gs.ctm = mul(a.slice(0, 6).map((v) => num(v, 0)), gs.ctm);
         break;
+      case "w": gs.lw = num(a[0], 1); break;
+      case "g": case "rg": case "k": setFill(a); break;
+      case "sc": case "scn": setFill(a); break;
+      case "cs": gs.fill = a[0] && a[0].name === "Pattern" ? null : "000000"; break;
       case "BT": tm = IDENTITY.slice(); tlm = IDENTITY.slice(); break;
       case "Tc": gs.Tc = num(a[0], 0); break;
       case "Tw": gs.Tw = num(a[0], 0); break;
@@ -320,11 +390,17 @@ function removeTextInRects(bytes, rects, fonts) {
         break;
     }
   }
-  if (!edits.length) return { bytes, hits, removed: 0 };
+  return { bytes: applyEdits(bytes, edits), removed: edits.length };
+}
+
+function applyEdits(bytes, edits) {
+  if (!edits.length) return bytes;
+  edits.sort((p, q) => p.start - q.start);
   const parts = [];
   let pos = 0;
   let size = 0;
   for (const edit of edits) {
+    if (edit.start < pos) continue;
     const head = bytes.subarray(pos, edit.start);
     const body = Uint8Array.from(edit.text, (ch) => ch.charCodeAt(0));
     parts.push(head, body);
@@ -340,7 +416,61 @@ function removeTextInRects(bytes, rects, fonts) {
     out.set(part, at);
     at += part.length;
   }
-  return { bytes: out, hits, removed: edits.length };
+  return out;
+}
+
+// A thin horizontal bar (an underline) lying at the bottom of a zone.
+function underlineZone(path, zones) {
+  const b = path.bbox;
+  if (!Number.isFinite(b.x0)) return -1;
+  const height = b.y1 - b.y0;
+  const width = b.x1 - b.x0;
+  const straight = path.ops.every((op) => op === "m" || op === "l" || op === "h" || op === "re");
+  const filledBar = straight && /^[fF]/.test(path.paint) && height <= 2.5;
+  const strokedLine = straight && /^[Ss]$/.test(path.paint) && height <= 0.5 && path.lineWidth <= 2.5;
+  if (!(filledBar || strokedLine) || width < 2) return -1;
+  const cy = (b.y0 + b.y1) / 2;
+  for (let k = 0; k < zones.length; k += 1) {
+    const z = zones[k];
+    if (b.x0 >= z.x0 - 2 && b.x1 <= z.x1 + 2 && cy >= z.y0 - 3 && cy <= z.y0 + (z.y1 - z.y0) * 0.35) return k;
+  }
+  return -1;
+}
+
+// bytes: decoded page content. rects: [{ x0, y0, x1, y1 }] in user space.
+// zones: link rects whose underlines go too. Returns the new content, how
+// many visible strings went per rect, and how many underlines per zone.
+function removeTextInRects(bytes, rects, fonts, zones) {
+  const hits = new Array(rects.length).fill(0);
+  const underlines = new Array((zones || []).length).fill(0);
+  const result = walkContent(bytes, fonts, {
+    onString: (seg) => {
+      const hit = inRect(rects, seg.mx, seg.my);
+      if (hit < 0) return false;
+      if (seg.visible) hits[hit] += 1;
+      return true;
+    },
+    onPath: (path) => {
+      if (!zones || !zones.length) return false;
+      const zone = underlineZone(path, zones);
+      if (zone < 0) return false;
+      underlines[zone] += 1;
+      return true;
+    },
+  });
+  return { bytes: result.bytes, hits, underlines, removed: result.removed };
+}
+
+// Visible horizontal strings with their position and fill color.
+function collectTextSegments(bytes, fonts) {
+  const segments = [];
+  walkContent(bytes, fonts, {
+    onString: (seg) => {
+      if (seg.visible && seg.horizontal) segments.push(seg);
+      return false;
+    },
+  });
+  return segments;
 }
 
 // --- pdf-lib side -----------------------------------------------------------
@@ -388,6 +518,27 @@ function fontWidths(PDFLib, context, fontDict) {
   const missing = (descriptor && numberOf(PDFLib, descriptor.lookup(PDFName.of("MissingWidth")))) || 500;
   const list = [];
   if (widths) for (let k = 0; k < widths.size(); k += 1) list.push(numberOf(PDFLib, widths.lookup(k)) ?? missing);
+  if (!widths) {
+    // the standard 14 fonts may leave out Widths; use their built-in metrics
+    const base = fontDict.lookup(PDFName.of("BaseFont"));
+    const name = base instanceof PDFName ? base.decodeText() : "";
+    const standard = Object.values(PDFLib.StandardFonts || {}).find((f) => f === name.replace(/^[A-Z]{6}\+/, ""));
+    if (standard && PDFLib.StandardFontEmbedder) {
+      const embedder = PDFLib.StandardFontEmbedder.for(standard);
+      const cache = new Map();
+      return {
+        twoByte: false,
+        width: (code) => {
+          if (!cache.has(code)) {
+            let w = missing;
+            try { w = embedder.widthOfTextAtSize(String.fromCharCode(code), 1000); } catch (_) { /* not encodable */ }
+            cache.set(code, w);
+          }
+          return cache.get(code);
+        },
+      };
+    }
+  }
   return {
     twoByte: false,
     width: (code) => {
@@ -442,35 +593,54 @@ function pageContentBytes(PDFLib, page) {
   return out;
 }
 
-// Rewrites one page. blocks: metadata entries. Returns the ids whose original
-// text was removed; the rest still need a cover.
-function removePageText(PDFLib, page, blocks) {
-  if (!blocks.length) return new Set();
+// Rewrites one page. blocks: metadata entries; zones: link rects whose
+// underlines should go too. Returns the ids whose original text was removed
+// (the rest still need a cover) and the indexes of zones that lost an
+// underline.
+function removePageText(PDFLib, page, blocks, zones) {
+  const none = { done: new Set(), underlined: new Set() };
+  if (!blocks.length) return none;
   let content;
   try {
     content = pageContentBytes(PDFLib, page);
   } catch (_) {
     content = null;
   }
-  if (!content) return new Set();
+  if (!content) return none;
   const rects = blocks.map((b) => ({
     x0: b.x - b.size * 0.5,
     y0: b.y - b.size * 0.3,
     x1: b.x + b.w + b.size * 0.3,
     y1: b.y + b.h + b.size * 0.2,
   }));
-  const result = removeTextInRects(content, rects, pageFonts(PDFLib, page));
+  const result = removeTextInRects(content, rects, pageFonts(PDFLib, page), zones || []);
   const done = new Set();
   result.hits.forEach((count, k) => { if (count > 0) done.add(blocks[k].id); });
+  const underlined = new Set();
+  result.underlines.forEach((count, k) => { if (count > 0) underlined.add(k); });
   if (result.removed) {
     const context = page.doc.context;
     const ref = context.register(context.flateStream(result.bytes));
     page.node.set(PDFLib.PDFName.of("Contents"), ref);
   }
-  return done;
+  return { done, underlined };
 }
 
-const api = { tokenize, parseOps, removeTextInRects, removePageText };
+// Shown strings of one page with position and fill color, for extraction.
+function collectPageSegments(PDFLib, page) {
+  const content = pageContentBytes(PDFLib, page);
+  if (!content) return [];
+  return collectTextSegments(content, pageFonts(PDFLib, page))
+    .map(({ x0, y0, x1, color, count }) => ({ x0, y0, x1, color, count }));
+}
+
+// Decoded page content as text, for tests and debugging.
+function pageContentText(PDFLib, page) {
+  const bytes = pageContentBytes(PDFLib, page);
+  return bytes ? latin1(bytes, 0, bytes.length) : "";
+}
+
+const api = { pageContentText, tokenize, parseOps, removeTextInRects, collectTextSegments, removePageText, collectPageSegments };
 
 if (typeof module !== "undefined" && module.exports) module.exports = api;
 if (typeof window !== "undefined") Object.assign(window, api);

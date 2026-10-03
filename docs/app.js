@@ -409,7 +409,24 @@ async function readPdf(file) {
     }
     throw err;
   }
-  extracted = await extractPdfTexts(sourcePdf, (page, total) => setProgress(`テキストを抽出中… ${page} / ${total} ページ`));
+  // pdf-lib reads the page content for text colors; without it (encrypted or
+  // unreadable files) every block is extracted as plain text.
+  let segmentsFor = null;
+  try {
+    const { PDFLib } = await loadPdfLib();
+    const doc = await PDFLib.PDFDocument.load(pdfBytes.slice(0), { ignoreEncryption: true, updateMetadata: false });
+    if (!doc.isEncrypted) {
+      const pages = doc.getPages();
+      segmentsFor = (index) => (pages[index] ? collectPageSegments(PDFLib, pages[index]) : []);
+    }
+  } catch (err) {
+    logError("PDF の文字色の読み取り", err);
+  }
+  extracted = await extractPdfTexts(
+    sourcePdf,
+    (page, total) => setProgress(`テキストを抽出中… ${page} / ${total} ページ`),
+    { segmentsFor }
+  );
   if (!extracted.uidCount) {
     throw new Error("テキストが見つかりませんでした。スキャンした画像だけの PDF は対象外です");
   }
