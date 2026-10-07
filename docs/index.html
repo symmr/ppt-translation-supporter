@@ -490,7 +490,13 @@
       </dialog>
       <p class="meta" id="extractMeta"></p>
       <p class="meta">下のプロンプトと本文をコピーし、ChatGPT や Claude などの LLM に貼り付けて翻訳してください。返ってきた訳文は次のステップで貼り戻します。</p>
-      <label for="promptBox">翻訳プロンプト<span class="hint">（編集できます。訳先の言語や文体を変えたい場合はここを書き換えてください。内容はこのブラウザに保存されます）</span></label>
+      <div class="opt-row">
+        <div class="opt">
+          <label for="directionSelect">翻訳の方向</label>
+          <select id="directionSelect"></select>
+        </div>
+      </div>
+      <label for="promptBox">翻訳プロンプト<span class="hint">（編集できます。文体を変えたい場合はここを書き換えてください。方向ごとに、編集した内容がこのブラウザに保存されます）</span></label>
       <textarea id="promptBox" class="prompt-box"></textarea>
       <div class="row">
         <button type="button" id="resetPromptBtn">プロンプトを既定に戻す</button>

@@ -28,7 +28,16 @@ const STRIP_TAG_RE = /(?:\[\/?\d+\]|⟦\/?\d+⟧)/g;
 // same pattern without /g, so .test() does not carry lastIndex between calls
 const TAG_LIKE_RE = /(?:\[\/?\d+\]|⟦\/?\d+⟧)/;
 
-const TRANSLATION_PROMPT = `あなたはプロのローカライズ翻訳者です。以下のファイルの抽出テキストを日本語に翻訳してください。
+// Translation direction. "en-ja" is the default and keeps the prompt that
+// shipped before directions existed.
+const DEFAULT_DIRECTION = "en-ja";
+const TRANSLATION_DIRECTIONS = [
+  { id: "en-ja", label: "英語 → 日本語" },
+  { id: "ja-en", label: "日本語 → 英語" },
+];
+
+const TRANSLATION_PROMPTS = {
+  "en-ja": `あなたはプロのローカライズ翻訳者です。以下のファイルの抽出テキストを日本語に翻訳してください。
 
 # 厳守するルール
 1. 「uid_0001」のような uid 行は、翻訳・改変・削除・並べ替えをせず、そのまま出力する。
@@ -39,7 +48,27 @@ const TRANSLATION_PROMPT = `あなたはプロのローカライズ翻訳者で�
 6. 文体は常体(だ・である調)で統一する。見出しや短い名詞句は体言止めを適切に用いる。
 7. 訳文が対応するタグの範囲からはみ出さないようにする(各タグ内は、その原文に対応する訳のみを入れる)。
 8. 訳漏れを避ける。各 uid の本文行に英文が残る場合、製品名・固有名詞でない限り必ず訳す。
-`;
+`,
+  "ja-en": `あなたはプロのローカライズ翻訳者です。以下のファイルの抽出テキストを英語に翻訳してください。
+
+# 厳守するルール
+1. 「uid_0001」のような uid 行は、翻訳・改変・削除・並べ替えをせず、そのまま出力する。
+2. 「[0]...[/0]」のようなタグは、番号・個数・順序・開閉をすべて維持する。タグの中のテキストだけを翻訳し、タグ自体は一切追加・削除・変更しない。空のタグ([2][/2])もそのまま残す。
+3. 入力の行構造(uid 行 → 本文行)を厳密に保つ。
+4. 出力は翻訳結果のテキストのみ。前置き・解説を付けない。出力結果はコードブロックとし、改行も適切に維持する。
+5. 製品名・固有名詞のみ原文のまま残す。それ以外の日本語はすべて英語に訳す。一般語・説明文・見出し・ラベルを日本語のまま残さない。
+6. 自然で簡潔なビジネス・技術文書の英語(米国式)にする。見出しや短い項目は名詞句でまとめ、原文に句点がない行にピリオドを付けない。
+7. 訳文が対応するタグの範囲からはみ出さないようにする(各タグ内は、その原文に対応する訳のみを入れる)。語順の違いでタグの位置が入れ替わる場合も、タグの番号・個数・順序・開閉は原文のとおりに維持する。
+8. 訳漏れを避ける。各 uid の本文行に日本語が残る場合、製品名・固有名詞でない限り必ず訳す。全角の英数字・記号は半角にする。
+`,
+};
+
+function translationPrompt(direction) {
+  return TRANSLATION_PROMPTS[direction] || TRANSLATION_PROMPTS[DEFAULT_DIRECTION];
+}
+
+// Kept for callers that predate directions.
+const TRANSLATION_PROMPT = TRANSLATION_PROMPTS[DEFAULT_DIRECTION];
 
 function getDOMParser() {
   if (typeof DOMParser !== "undefined") return DOMParser;
@@ -1063,6 +1092,10 @@ async function addPictureTextBoxes(zip, boxes) {
 
 const api = {
   TRANSLATION_PROMPT,
+  TRANSLATION_PROMPTS,
+  TRANSLATION_DIRECTIONS,
+  DEFAULT_DIRECTION,
+  translationPrompt,
   DEFAULT_FONT,
   PRESET_FONTS,
   collectFontsFromZip,
