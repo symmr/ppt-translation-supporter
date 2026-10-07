@@ -52,29 +52,28 @@ test("detectDirection picks Japanese to English for a Japanese deck", () => {
   assert.equal(detectDirection(text).direction, "ja-en");
 });
 
-test("detectDirection counts only characters, not uid lines, tags, digits or symbols", () => {
+test("detectDirection counts only the text, not uid lines, tags, digits or symbols", () => {
   // uid_ lines and [n] tags hold Latin letters that are not content
   const text = formatExtractFile(["uid_0001", "[0][/0]", "uid_0002", "2026/10/07 ---"]);
   const found = detectDirection(text);
-  assert.equal(found.jaShare, null);
+  assert.equal(found.ja, 0);
   assert.equal(found.direction, "en-ja");
 });
 
-test("detectDirection keeps a Japanese deck full of product names as Japanese", () => {
-  // 30 Japanese characters against 40 Latin letters is 43% Japanese
-  const text = formatExtractFile(["uid_0001", "Splunk Observability Cloud と OpenTelemetry Collector を使ってサービスの状態を可視化する方法を説明する"]);
+test("detectDirection treats a single Japanese character as Japanese", () => {
+  const text = formatExtractFile(["uid_0001", "Presented by 山 at the annual customer summit for the platform team and partners"]);
   const found = detectDirection(text);
-  assert.ok(found.jaShare >= 0.3, `share ${found.jaShare}`);
+  assert.equal(found.ja, 1);
   assert.equal(found.direction, "ja-en");
 });
 
-test("detectDirection keeps an English deck with a few Japanese names as English", () => {
-  const text = formatExtractFile(["uid_0001", "Presented by 山田 太郎 at the annual customer summit for the platform team and partners"]);
-  assert.equal(detectDirection(text).direction, "en-ja");
+test("detectDirection recognises hiragana, katakana, kanji and half-width katakana", () => {
+  for (const ch of ["あ", "ア", "漢", "ｱ"]) {
+    assert.equal(detectDirection(`Revenue ${ch}`).direction, "ja-en", ch);
+  }
 });
 
-test("detectDirection treats the 30% line as Japanese", () => {
-  // 3 Japanese characters and 7 Latin letters
-  assert.equal(detectDirection("あいうabcdefg").direction, "ja-en");
-  assert.equal(detectDirection("あいabcdefgh").direction, "en-ja");
+test("detectDirection ignores Japanese-looking characters in uid lines and tags only", () => {
+  assert.equal(detectDirection("uid_0001\nHello world").direction, "en-ja");
+  assert.equal(detectDirection("[0]Hello[/0]").direction, "en-ja");
 });
