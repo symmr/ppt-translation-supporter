@@ -33,7 +33,15 @@ const fontRow = document.getElementById("fontRow");
 const KEEP_VALUE = "";
 const CUSTOM_VALUE = "__custom__";
 
-const PROMPT_STORAGE_KEY = "ppt-translation-supporter:prompt";
+// The en-ja prompt keeps the key used before directions existed, so edits saved
+// by earlier versions are still picked up.
+const PROMPT_STORAGE_KEYS = {
+  "en-ja": "ppt-translation-supporter:prompt",
+  "ja-en": "ppt-translation-supporter:prompt:ja-en",
+};
+const DIRECTION_STORAGE_KEY = "ppt-translation-supporter:direction";
+const directionSelect = document.getElementById("directionSelect");
+let lastDirection = DEFAULT_DIRECTION;
 
 // PDF libraries load only when a PDF is dropped.
 const PDFJS_URL = "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs";
@@ -113,7 +121,7 @@ function addOption(parent, value, label) {
 }
 
 // Same grouping and default as PPT Finalizer's picker: presets, then whatever
-// the deck already uses, then free text, starting on Noto Sans JP.
+// the deck already uses, then free text, starting on the default font for the\n// translation direction (Noto Sans JP for Japanese, Arial for English).
 // "指定しない" is the escape hatch that leaves the deck's fonts untouched.
 function populateFontSelect(selectEl, customInput, deckFonts, desired) {
   selectEl.innerHTML = "";
@@ -136,15 +144,15 @@ function populateFontSelect(selectEl, customInput, deckFonts, desired) {
   addOption(selectEl, CUSTOM_VALUE, "その他（自由入力）");
 
   const known = new Set([KEEP_VALUE, CUSTOM_VALUE, ...PRESET_FONTS, ...inDeck.map((f) => f.name)]);
-  selectEl.value = known.has(desired) ? desired : DEFAULT_FONT;
+  selectEl.value = known.has(desired) ? desired : defaultFont();
   customInput.hidden = selectEl.value !== CUSTOM_VALUE;
 }
 
 function resetFontPickers(deckFonts) {
   titleCustomFont.value = "";
   bodyCustomFont.value = "";
-  populateFontSelect(titleFontSelect, titleCustomFont, deckFonts, DEFAULT_FONT);
-  populateFontSelect(bodyFontSelect, bodyCustomFont, deckFonts, DEFAULT_FONT);
+  populateFontSelect(titleFontSelect, titleCustomFont, deckFonts, defaultFont());
+  populateFontSelect(bodyFontSelect, bodyCustomFont, deckFonts, defaultFont());
   updateFontPreview(titleFontSelect, titleCustomFont, titleFontPreview);
   updateFontPreview(bodyFontSelect, bodyCustomFont, bodyFontPreview);
 }
@@ -170,28 +178,94 @@ function bindFontPicker(selectEl, customInput, previewEl) {
   updateFontPreview(selectEl, customInput, previewEl);
 }
 
+function currentDirection() {
+  return directionSelect.value === "ja-en" ? "ja-en" : DEFAULT_DIRECTION;
+}
+
+// English text in Noto Sans JP or a Japanese UI font looks wide and uneven, so
+// Japanese-to-English starts on Arial, which exists on Windows, Mac and the web.
+const ENGLISH_DEFAULT_FONT = "Arial";
+
+function defaultFontFor(direction) {
+  return direction === "ja-en" ? ENGLISH_DEFAULT_FONT : DEFAULT_FONT;
+}
+
+function defaultFont() {
+  return defaultFontFor(currentDirection());
+}
+
+function syncFontNote() {
+  fontNote.textContent = `書き戻すときにフォントを指定できます。既定は ${defaultFont()} です。元のファイルのフォントをそのまま使う場合は「指定しない」を選んでください。`;
+}
+
+// Moves a picker to the new direction's default only while it still sits on the
+// old direction's default; a font the user picked is left alone.
+function followDirectionFont(previous) {
+  const was = defaultFontFor(previous);
+  const pickers = [
+    [titleFontSelect, titleCustomFont, titleFontPreview],
+    [bodyFontSelect, bodyCustomFont, bodyFontPreview],
+  ];
+  for (const [selectEl, customInput, previewEl] of pickers) {
+    if (selectEl.value !== was) continue;
+    selectEl.value = defaultFont();
+    customInput.hidden = selectEl.value !== CUSTOM_VALUE;
+    updateFontPreview(selectEl, customInput, previewEl);
+  }
+  syncFontNote();
+}
+
+function loadStoredDirection() {
+  try {
+    const value = localStorage.getItem(DIRECTION_STORAGE_KEY);
+    return TRANSLATION_DIRECTIONS.some((d) => d.id === value) ? value : DEFAULT_DIRECTION;
+  } catch (_) {
+    return DEFAULT_DIRECTION;
+  }
+}
+
+function storeDirection(value) {
+  try {
+    if (value === DEFAULT_DIRECTION) localStorage.removeItem(DIRECTION_STORAGE_KEY);
+    else localStorage.setItem(DIRECTION_STORAGE_KEY, value);
+  } catch (_) {
+    // the direction just won't persist
+  }
+}
+
 function defaultPrompt() {
-  return TRANSLATION_PROMPT.trim() + "\n";
+  return translationPrompt(currentDirection()).trim() + "\n";
 }
 
 function loadStoredPrompt() {
   try {
-    return localStorage.getItem(PROMPT_STORAGE_KEY) || "";
+    return localStorage.getItem(PROMPT_STORAGE_KEYS[currentDirection()]) || "";
   } catch (_) {
     return "";
   }
 }
 
 function storePrompt(value) {
+  const key = PROMPT_STORAGE_KEYS[currentDirection()];
   try {
     if (value && value.trim() && value !== defaultPrompt()) {
-      localStorage.setItem(PROMPT_STORAGE_KEY, value);
+      localStorage.setItem(key, value);
     } else {
-      localStorage.removeItem(PROMPT_STORAGE_KEY);
+      localStorage.removeItem(key);
     }
   } catch (_) {
     // a browser with storage blocked still works, the prompt just won't persist
   }
+}
+
+function populateDirectionSelect() {
+  directionSelect.innerHTML = "";
+  for (const { id, label } of TRANSLATION_DIRECTIONS) addOption(directionSelect, id, label);
+  directionSelect.value = loadStoredDirection();
+  lastDirection = currentDirection();
+  // the pickers were built before the stored direction was known
+  resetFontPickers(deckFonts);
+  syncFontNote();
 }
 
 function bindDrop(zone, onFile, acceptTest) {
@@ -744,6 +818,15 @@ bindImageTools({
 });
 
 promptBox.addEventListener("input", () => storePrompt(promptBox.value));
+// Each direction keeps its own edited prompt; switching shows that one.
+directionSelect.addEventListener("change", () => {
+  const previous = lastDirection;
+  lastDirection = currentDirection();
+  storeDirection(lastDirection);
+  promptBox.value = loadStoredPrompt() || defaultPrompt();
+  followDirectionFont(previous);
+});
+populateDirectionSelect();
 document.getElementById("resetPromptBtn").addEventListener("click", () => {
   promptBox.value = defaultPrompt();
   storePrompt(promptBox.value);
