@@ -67,6 +67,30 @@ function translationPrompt(direction) {
   return TRANSLATION_PROMPTS[direction] || TRANSLATION_PROMPTS[DEFAULT_DIRECTION];
 }
 
+// Guess the direction from the extracted text. Only English and Japanese are
+// supported, so the share of Japanese characters among Japanese + Latin letters
+// is enough. The bar is 30%, not 50%: a Japanese deck carries many product names
+// and acronyms in Latin letters, while an English deck with a few Japanese names
+// stays far below it.
+const JA_CHAR_RE = /[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uFF66-\uFF9F]/g;
+const LATIN_LETTER_RE = /[A-Za-z\u00C0-\u024F]/g;
+const JA_SHARE_THRESHOLD = 0.3;
+
+function detectDirection(text) {
+  // uid lines and [n] tags are ours, not content
+  const body = String(text || "")
+    .split(/\r?\n/)
+    .filter((line) => !/^\uFEFF?uid_\d+$/.test(line.trim()))
+    .join("\n")
+    .replace(STRIP_TAG_RE, "");
+  const ja = (body.match(JA_CHAR_RE) || []).length;
+  const latin = (body.match(LATIN_LETTER_RE) || []).length;
+  const total = ja + latin;
+  if (!total) return { direction: DEFAULT_DIRECTION, jaShare: null, ja, latin };
+  const jaShare = ja / total;
+  return { direction: jaShare >= JA_SHARE_THRESHOLD ? "ja-en" : "en-ja", jaShare, ja, latin };
+}
+
 // Kept for callers that predate directions.
 const TRANSLATION_PROMPT = TRANSLATION_PROMPTS[DEFAULT_DIRECTION];
 
@@ -1096,6 +1120,7 @@ const api = {
   TRANSLATION_DIRECTIONS,
   DEFAULT_DIRECTION,
   translationPrompt,
+  detectDirection,
   DEFAULT_FONT,
   PRESET_FONTS,
   collectFontsFromZip,
