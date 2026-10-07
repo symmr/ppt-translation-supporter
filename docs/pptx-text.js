@@ -211,11 +211,73 @@ function paragraphHasBreak(paragraph) {
   return elementChildren(paragraph).some((child) => child.localName === "br");
 }
 
+// Values that mean "not set" in a run's formatting, so b="0" and no b match.
+const RPR_OFF_VALUES = new Set(["", "0", "false", "none", "noStrike"]);
+const RPR_STYLE_ATTRS = ["b", "i", "u", "strike", "cap", "sz", "baseline", "spc"];
+const RPR_STYLE_CHILDREN = ["solidFill", "highlight", "hlinkClick"];
+
+function elementSignature(el) {
+  const attrs = [];
+  for (let i = 0; i < (el.attributes ? el.attributes.length : 0); i += 1) {
+    attrs.push(`${el.attributes[i].name}=${el.attributes[i].value}`);
+  }
+  attrs.sort();
+  return `${el.localName}(${attrs.join(",")})[${elementChildren(el).map(elementSignature).join("")}]`;
+}
+
+// What a reader sees of a run: weight, slant, underline, size, colour, link.
+// Typeface, language and spell-check marks are left out, so runs that only
+// differ in those still count as one piece of text.
+function runStyleKey(run) {
+  const rPr = firstChildLocal(run, "rPr");
+  if (!rPr) return "";
+  const parts = RPR_STYLE_ATTRS.map((name) => {
+    const value = rPr.getAttribute(name) || "";
+    return `${name}=${RPR_OFF_VALUES.has(value) ? "" : value}`;
+  });
+  for (const name of RPR_STYLE_CHILDREN) {
+    const child = firstChildLocal(rPr, name);
+    if (child) parts.push(elementSignature(child));
+  }
+  return parts.join(";");
+}
+
+// Runs of one paragraph merged into pieces of identical formatting, with the
+// line breaks kept inside the text. Null when the paragraph holds a field,
+// whose text cannot be rebuilt from a run.
+function styleGroups(paragraph) {
+  const groups = [];
+  let lead = "";
+  for (const child of elementChildren(paragraph)) {
+    if (child.localName === "fld") return null;
+    if (child.localName === "r") {
+      const key = runStyleKey(child);
+      const last = groups[groups.length - 1];
+      if (last && last.key === key) {
+        last.text += runText(child);
+      } else {
+        groups.push({ key, rPr: firstChildLocal(child, "rPr"), text: lead + runText(child) });
+        lead = "";
+      }
+    } else if (child.localName === "br") {
+      if (groups.length) groups[groups.length - 1].text += "\n";
+      else lead += "\n";
+    }
+  }
+  return groups;
+}
+
 function runsToTaggedText(paragraph) {
+  if (paragraphHasBreak(paragraph)) {
+    // Tagging every run of a wrapped paragraph would bury the uid body in
+    // markup. Tags appear only where the formatting actually changes (a bold
+    // or coloured phrase), one tag per stretch of identical formatting.
+    const groups = styleGroups(paragraph);
+    if (!groups || groups.length <= 1) return paragraphPlainText(paragraph);
+    return groups.map((group, i) => `[${i}]${group.text}[/${i}]`).join("");
+  }
   const runs = runsOf(paragraph);
-  // A line break makes the paragraph one string. Tagging each run would split
-  // the uid body into markup the translator has to preserve.
-  if (runs.length <= 1 || paragraphHasBreak(paragraph)) return paragraphPlainText(paragraph);
+  if (runs.length <= 1) return paragraphPlainText(paragraph);
   return runs.map((run, i) => `[${i}]${runText(run)}[/${i}]`).join("");
 }
 
@@ -290,30 +352,86 @@ function collectTagMatches(text) {
   return matches;
 }
 
-function rewriteBrokenLines(paragraph, text) {
+// Tokens are { br: true, rPr } for a line break or { text, rPr } for a run,
+// each carrying the formatting node it should copy (or null for none).
+function writeParagraphTokens(paragraph, tokens) {
   const doc = paragraph.ownerDocument;
-  const sample = runsOf(paragraph)[0];
-  const rPr = sample && firstChildLocal(sample, "rPr");
   for (const child of [...elementChildren(paragraph)]) {
     if (child.localName === "r" || child.localName === "br") paragraph.removeChild(child);
   }
   // endParaRPr must stay the last child of a:p. Runs placed after it are not
   // shown by PowerPoint, so the new runs go in front of it.
   const tail = elementChildren(paragraph).find((child) => child.localName === "endParaRPr") || null;
-  String(text).split("\n").forEach((line, index) => {
-    if (index) {
+  for (const token of tokens) {
+    if (token.br) {
       const br = doc.createElementNS(NS_A, "a:br");
-      if (rPr) br.appendChild(rPr.cloneNode(true));
+      if (token.rPr) br.appendChild(token.rPr.cloneNode(true));
       paragraph.insertBefore(br, tail);
+      continue;
     }
     const run = doc.createElementNS(NS_A, "a:r");
-    if (rPr) run.appendChild(rPr.cloneNode(true));
+    if (token.rPr) run.appendChild(token.rPr.cloneNode(true));
     const node = doc.createElementNS(NS_A, "a:t");
     node.setAttributeNS(NS_XML, "xml:space", "preserve");
-    node.textContent = line;
+    node.textContent = token.text;
     run.appendChild(node);
     paragraph.insertBefore(run, tail);
+  }
+}
+
+// Translation lines to tokens, the line breaks of the translation replacing
+// the original ones.
+function pushTextTokens(tokens, text, rPr, skipEmpty) {
+  String(text).split("\n").forEach((line, index) => {
+    if (index) tokens.push({ br: true, rPr });
+    if (line || !skipEmpty) tokens.push({ text: line, rPr });
   });
+}
+
+function rewriteBrokenLines(paragraph, text) {
+  const sample = runsOf(paragraph)[0];
+  const rPr = sample ? firstChildLocal(sample, "rPr") : null;
+  const tokens = [];
+  pushTextTokens(tokens, text, rPr, false);
+  writeParagraphTokens(paragraph, tokens);
+}
+
+// Rebuild a wrapped paragraph from a translation tagged like the extract: one
+// tag per formatting group, each tag's text written with that group's
+// formatting. Null when the tags do not line up with the groups, or when text
+// sits outside every tag, so the caller can fall back to flattening.
+function tokensFromTaggedText(text, groups) {
+  for (const base of [TAG_RE, TAG_RE_LEGACY]) {
+    const found = [...String(text).matchAll(new RegExp(base.source, "g"))];
+    if (!found.length) continue;
+    const indices = found.map((m) => Number(m[1]));
+    if (
+      found.length !== groups.length ||
+      new Set(indices).size !== groups.length ||
+      !indices.every((i) => i >= 0 && i < groups.length)
+    ) {
+      return null;
+    }
+    const tokens = [];
+    let pos = 0;
+    let lastRPr = groups[indices[0]].rPr;
+    // Line breaks the translator left between two tags are kept; any other
+    // text there belongs to no group.
+    const pushGap = (gap) => {
+      if (gap.trim()) return false;
+      for (let n = gap.split("\n").length - 1; n > 0; n -= 1) tokens.push({ br: true, rPr: lastRPr });
+      return true;
+    };
+    for (const m of found) {
+      if (!pushGap(String(text).slice(pos, m.index))) return null;
+      lastRPr = groups[Number(m[1])].rPr;
+      pushTextTokens(tokens, m[2], lastRPr, true);
+      pos = m.index + m[0].length;
+    }
+    if (!pushGap(String(text).slice(pos))) return null;
+    return tokens;
+  }
+  return null;
 }
 
 function setParagraphText(paragraph, translatedText, options) {
@@ -325,6 +443,25 @@ function setParagraphText(paragraph, translatedText, options) {
   const text = String(translatedText);
 
   if (paragraphHasBreak(paragraph)) {
+    const groups = styleGroups(paragraph);
+    // More than one formatting group: the extract carried tags, so honour them.
+    if (groups && groups.length > 1) {
+      const tokens = tokensFromTaggedText(text, groups);
+      if (tokens) {
+        writeParagraphTokens(paragraph, tokens);
+        if (font) {
+          for (const run of runsOf(paragraph)) setRunFont(run, font);
+        }
+        return { mode: "runs" };
+      }
+      // Tags missing or not matching: one formatting for the whole paragraph,
+      // reported like any other flattened paragraph.
+      rewriteBrokenLines(paragraph, text.replace(STRIP_TAG_RE, ""));
+      if (font) {
+        for (const run of runsOf(paragraph)) setRunFont(run, font);
+      }
+      return { mode: "flattened" };
+    }
     rewriteBrokenLines(paragraph, text);
     if (font) {
       for (const run of runsOf(paragraph)) setRunFont(run, font);
