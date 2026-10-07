@@ -39,9 +39,12 @@ const PROMPT_STORAGE_KEYS = {
   "en-ja": "ppt-translation-supporter:prompt",
   "ja-en": "ppt-translation-supporter:prompt:ja-en",
 };
-const DIRECTION_STORAGE_KEY = "ppt-translation-supporter:direction";
 const directionSelect = document.getElementById("directionSelect");
+const directionNote = document.getElementById("directionNote");
 let lastDirection = DEFAULT_DIRECTION;
+// Set once the user picks a direction by hand; detection then leaves it alone
+// until the next file is dropped.
+let directionPinned = false;
 
 // PDF libraries load only when a PDF is dropped.
 const PDFJS_URL = "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs";
@@ -121,7 +124,8 @@ function addOption(parent, value, label) {
 }
 
 // Same grouping and default as PPT Finalizer's picker: presets, then whatever
-// the deck already uses, then free text, starting on the default font for the\n// translation direction (Noto Sans JP for Japanese, Arial for English).
+// the deck already uses, then free text, starting on the default font for the
+// translation direction (Noto Sans JP for Japanese, Arial for English).
 // "指定しない" is the escape hatch that leaves the deck's fonts untouched.
 function populateFontSelect(selectEl, customInput, deckFonts, desired) {
   selectEl.innerHTML = "";
@@ -215,24 +219,6 @@ function followDirectionFont(previous) {
   syncFontNote();
 }
 
-function loadStoredDirection() {
-  try {
-    const value = localStorage.getItem(DIRECTION_STORAGE_KEY);
-    return TRANSLATION_DIRECTIONS.some((d) => d.id === value) ? value : DEFAULT_DIRECTION;
-  } catch (_) {
-    return DEFAULT_DIRECTION;
-  }
-}
-
-function storeDirection(value) {
-  try {
-    if (value === DEFAULT_DIRECTION) localStorage.removeItem(DIRECTION_STORAGE_KEY);
-    else localStorage.setItem(DIRECTION_STORAGE_KEY, value);
-  } catch (_) {
-    // the direction just won't persist
-  }
-}
-
 function defaultPrompt() {
   return translationPrompt(currentDirection()).trim() + "\n";
 }
@@ -261,11 +247,32 @@ function storePrompt(value) {
 function populateDirectionSelect() {
   directionSelect.innerHTML = "";
   for (const { id, label } of TRANSLATION_DIRECTIONS) addOption(directionSelect, id, label);
-  directionSelect.value = loadStoredDirection();
-  lastDirection = currentDirection();
-  // the pickers were built before the stored direction was known
-  resetFontPickers(deckFonts);
+  directionSelect.value = DEFAULT_DIRECTION;
+  lastDirection = DEFAULT_DIRECTION;
   syncFontNote();
+}
+
+// Switches direction and what follows it: the prompt shown and the default font.
+function setDirection(next) {
+  const previous = lastDirection;
+  directionSelect.value = next;
+  lastDirection = currentDirection();
+  promptBox.value = loadStoredPrompt() || defaultPrompt();
+  followDirectionFont(previous);
+}
+
+// Pick the direction from the characters in the extract, unless the user has
+// already chosen one for this file.
+function autoSelectDirection(text) {
+  if (directionPinned) return;
+  const found = detectDirection(text);
+  setDirection(found.direction);
+  if (found.jaShare === null) {
+    show(directionNote, "");
+    return;
+  }
+  const label = TRANSLATION_DIRECTIONS.find((d) => d.id === found.direction).label;
+  show(directionNote, `日本語が約 ${Math.round(found.jaShare * 100)}% のため「${label}」を選びました。違う場合は変更してください。`);
 }
 
 function bindDrop(zone, onFile, acceptTest) {
@@ -454,6 +461,7 @@ async function handlePptx(file) {
   pptxMeta.textContent = `${file.name} · ${(file.size / 1024).toFixed(1)} KB`;
   extractMeta.textContent = extractSummary(extracted);
   syncResultLabels();
+  autoSelectDirection(extracted.text);
   promptBox.value = loadStoredPrompt() || defaultPrompt();
   extractBox.value = extracted.text;
   resetFontPickers(deckFonts);
@@ -699,6 +707,8 @@ function clearDeckState() {
   resultBlob = null;
   resultName = "";
   deckFonts = [];
+  directionPinned = false;
+  show(directionNote, "");
   txtInput.value = "";
   txtMeta.hidden = true;
   txtMeta.textContent = "";
@@ -725,7 +735,7 @@ function resetAll() {
   fileInput.value = "";
   pptxMeta.hidden = true;
   pptxMeta.textContent = "";
-  promptBox.value = loadStoredPrompt() || defaultPrompt();
+  setDirection(DEFAULT_DIRECTION);
   setStepState(step1, "");
 }
 
@@ -806,6 +816,7 @@ bindImageTools({
   },
   applyExtract: (next) => {
     extracted = next;
+    autoSelectDirection(next.text);
     extractBox.value = next.text;
     extractMeta.textContent = extractSummary(next);
     resultBlob = null;
@@ -820,11 +831,9 @@ bindImageTools({
 promptBox.addEventListener("input", () => storePrompt(promptBox.value));
 // Each direction keeps its own edited prompt; switching shows that one.
 directionSelect.addEventListener("change", () => {
-  const previous = lastDirection;
-  lastDirection = currentDirection();
-  storeDirection(lastDirection);
-  promptBox.value = loadStoredPrompt() || defaultPrompt();
-  followDirectionFont(previous);
+  directionPinned = true;
+  show(directionNote, "");
+  setDirection(directionSelect.value);
 });
 populateDirectionSelect();
 document.getElementById("resetPromptBtn").addEventListener("click", () => {

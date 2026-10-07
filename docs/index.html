@@ -496,7 +496,8 @@
           <select id="directionSelect"></select>
         </div>
       </div>
-      <label for="promptBox">翻訳プロンプト<span class="hint">（編集できます。文体を変えたい場合はここを書き換えてください。方向ごとに、編集した内容がこのブラウザに保存されます）</span></label>
+      <p class="meta" id="directionNote" hidden></p>
+      <label for="promptBox">翻訳プロンプト<span class="hint">（編集できます。文体を変えたい場合はここを書き換えてください。方向ごとに、編集した内容がこのブラウザに保存されます。方向はファイルの内容から自動で選ばれます）</span></label>
       <textarea id="promptBox" class="prompt-box"></textarea>
       <div class="row">
         <button type="button" id="resetPromptBtn">プロンプトを既定に戻す</button>
