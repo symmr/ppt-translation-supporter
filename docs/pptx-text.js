@@ -297,11 +297,14 @@ function rewriteBrokenLines(paragraph, text) {
   for (const child of [...elementChildren(paragraph)]) {
     if (child.localName === "r" || child.localName === "br") paragraph.removeChild(child);
   }
+  // endParaRPr must stay the last child of a:p. Runs placed after it are not
+  // shown by PowerPoint, so the new runs go in front of it.
+  const tail = elementChildren(paragraph).find((child) => child.localName === "endParaRPr") || null;
   String(text).split("\n").forEach((line, index) => {
     if (index) {
       const br = doc.createElementNS(NS_A, "a:br");
       if (rPr) br.appendChild(rPr.cloneNode(true));
-      paragraph.appendChild(br);
+      paragraph.insertBefore(br, tail);
     }
     const run = doc.createElementNS(NS_A, "a:r");
     if (rPr) run.appendChild(rPr.cloneNode(true));
@@ -309,7 +312,7 @@ function rewriteBrokenLines(paragraph, text) {
     node.setAttributeNS(NS_XML, "xml:space", "preserve");
     node.textContent = line;
     run.appendChild(node);
-    paragraph.appendChild(run);
+    paragraph.insertBefore(run, tail);
   });
 }
 
