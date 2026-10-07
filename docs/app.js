@@ -267,12 +267,9 @@ function autoSelectDirection(text) {
   if (directionPinned) return;
   const found = detectDirection(text);
   setDirection(found.direction);
-  if (found.jaShare === null) {
-    show(directionNote, "");
-    return;
-  }
   const label = TRANSLATION_DIRECTIONS.find((d) => d.id === found.direction).label;
-  show(directionNote, `日本語が約 ${Math.round(found.jaShare * 100)}% のため「${label}」を選びました。違う場合は変更してください。`);
+  const reason = found.ja > 0 ? "日本語の文字が含まれるため" : "日本語の文字が含まれないため";
+  show(directionNote, `${reason}「${label}」を選びました。違う場合は変更してください。`);
 }
 
 function bindDrop(zone, onFile, acceptTest) {
