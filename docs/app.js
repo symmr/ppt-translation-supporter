@@ -39,6 +39,21 @@ const PROMPT_STORAGE_KEYS = {
   "en-ja": "ppt-translation-supporter:prompt",
   "ja-en": "ppt-translation-supporter:prompt:ja-en",
 };
+const OPTIONS_STORAGE_KEY = "ppt-translation-supporter:options";
+const styleSelect = document.getElementById("styleSelect");
+const amountUnitSelect = document.getElementById("amountUnitSelect");
+const jaStyleRow = document.getElementById("jaStyleRow");
+const fxEnabled = document.getElementById("fxEnabled");
+const fxLabel = document.getElementById("fxLabel");
+const fxFields = document.getElementById("fxFields");
+const fxRate = document.getElementById("fxRate");
+const fxFetchBtn = document.getElementById("fxFetchBtn");
+const fxSource = document.getElementById("fxSource");
+const glossaryBox = document.getElementById("glossaryBox");
+const rulesBox = document.getElementById("rulesBox");
+// Where the rate in the box came from; typing a rate by hand clears it.
+let fxOrigin = { name: "", site: "", date: "" };
+let fxFetchFailed = false;
 const directionSelect = document.getElementById("directionSelect");
 const directionNote = document.getElementById("directionNote");
 let lastDirection = DEFAULT_DIRECTION;
@@ -252,13 +267,142 @@ function populateDirectionSelect() {
   syncFontNote();
 }
 
-// Switches direction and what follows it: the prompt shown and the default font.
+// Switches direction and what follows it: the prompt shown, the default font
+// and the rules built from the options.
 function setDirection(next) {
   const previous = lastDirection;
   directionSelect.value = next;
   lastDirection = currentDirection();
   promptBox.value = loadStoredPrompt() || defaultPrompt();
   followDirectionFont(previous);
+  refreshRules();
+}
+
+// Style, amount unit and glossary are preferences and are kept in the browser.
+// The exchange rate is not: it goes stale.
+function loadOptions() {
+  let saved = {};
+  try {
+    saved = JSON.parse(localStorage.getItem(OPTIONS_STORAGE_KEY) || "{}") || {};
+  } catch (_) {
+    saved = {};
+  }
+  const pick = (list, value, fallback) => (list.some((o) => o.id === value) ? value : fallback);
+  return {
+    style: pick(PROMPT_STYLES, saved.style, DEFAULT_PROMPT_OPTIONS.style),
+    amountUnit: pick(PROMPT_AMOUNT_UNITS, saved.amountUnit, DEFAULT_PROMPT_OPTIONS.amountUnit),
+    glossary: typeof saved.glossary === "string" ? saved.glossary : "",
+  };
+}
+
+function storeOptions() {
+  try {
+    localStorage.setItem(OPTIONS_STORAGE_KEY, JSON.stringify({
+      style: styleSelect.value,
+      amountUnit: amountUnitSelect.value,
+      glossary: glossaryBox.value,
+    }));
+  } catch (_) {
+    // a browser with storage blocked still works, the options just won't persist
+  }
+}
+
+function populateOptions() {
+  styleSelect.innerHTML = "";
+  for (const { id, label } of PROMPT_STYLES) addOption(styleSelect, id, label);
+  amountUnitSelect.innerHTML = "";
+  for (const { id, label } of PROMPT_AMOUNT_UNITS) addOption(amountUnitSelect, id, label);
+  const saved = loadOptions();
+  styleSelect.value = saved.style;
+  amountUnitSelect.value = saved.amountUnit;
+  glossaryBox.value = saved.glossary;
+}
+
+function titleIds() {
+  return extracted ? extracted.metadata.filter((item) => item.title).map((item) => item.id) : [];
+}
+
+function fxOptions() {
+  return {
+    enabled: fxEnabled.checked,
+    rate: fxRate.value,
+    date: fxOrigin.date,
+    source: fxOrigin.name || "手入力",
+  };
+}
+
+function renderFxSource() {
+  fxSource.textContent = "";
+  if (!validFxRate(fxRate.value)) {
+    fxSource.textContent = fxFetchFailed
+      ? "レートを取得できませんでした。手入力してください。"
+      : "レートを入力するか、「最新のレートを取得」を押してください。";
+    return;
+  }
+  if (!fxOrigin.name) {
+    fxSource.textContent = "手入力のレートです。";
+    return;
+  }
+  fxSource.append("取得元: ");
+  const link = document.createElement("a");
+  link.href = fxOrigin.site;
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  link.textContent = fxOrigin.name;
+  fxSource.append(link, `、${fxOrigin.date} 時点`);
+}
+
+// Rebuilds the rules section from the current choices. Called on every change,
+// and after an extract, because the title list comes from the extract.
+function refreshRules() {
+  const direction = currentDirection();
+  jaStyleRow.hidden = direction !== "en-ja";
+  fxLabel.textContent = direction === "ja-en"
+    ? "為替換算する（円 → 米ドル）"
+    : "為替換算する（米ドル → 円）";
+  fxFields.hidden = !fxEnabled.checked;
+  if (fxEnabled.checked) renderFxSource();
+  rulesBox.value = buildPromptRules({
+    direction,
+    style: styleSelect.value,
+    amountUnit: amountUnitSelect.value,
+    titleIds: titleIds(),
+    fx: fxOptions(),
+    glossary: glossaryBox.value,
+  });
+}
+
+// What gets copied: the editable prompt followed by the generated rules.
+function fullPrompt() {
+  return buildFullPrompt(promptBox.value, rulesBox.value);
+}
+
+// Latest USD/JPY from the first source that answers. Only the rate is fetched;
+// the file never leaves the browser.
+async function fetchFxRate() {
+  fxFetchBtn.disabled = true;
+  fxSource.textContent = "レートを取得中…";
+  let fetched = false;
+  try {
+    for (const source of FX_SOURCES) {
+      try {
+        const res = await fetch(source.url, { cache: "no-store", signal: AbortSignal.timeout(8000) });
+        if (!res.ok) continue;
+        const parsed = parseFxResponse(source.id, await res.json());
+        if (!parsed) continue;
+        fxRate.value = String(parsed.rate);
+        fxOrigin = { name: source.name, site: source.site, date: parsed.date };
+        fetched = true;
+        break;
+      } catch (err) {
+        logError(`為替レートの取得 (${source.id})`, err);
+      }
+    }
+  } finally {
+    fxFetchFailed = !fetched;
+    fxFetchBtn.disabled = false;
+    refreshRules();
+  }
 }
 
 // Pick the direction from the characters in the extract, unless the user has
@@ -459,6 +603,7 @@ async function handlePptx(file) {
   extractMeta.textContent = extractSummary(extracted);
   syncResultLabels();
   autoSelectDirection(extracted.text);
+  refreshRules();
   promptBox.value = loadStoredPrompt() || defaultPrompt();
   extractBox.value = extracted.text;
   resetFontPickers(deckFonts);
@@ -706,6 +851,7 @@ function clearDeckState() {
   deckFonts = [];
   directionPinned = false;
   show(directionNote, "");
+  refreshRules();
   txtInput.value = "";
   txtMeta.hidden = true;
   txtMeta.textContent = "";
@@ -753,10 +899,10 @@ document.getElementById("applyPasteBtn").addEventListener("click", () => {
 });
 
 document.getElementById("copyPromptBtn").addEventListener("click", () => {
-  copyText(promptBox.value);
+  copyText(fullPrompt());
 });
 document.getElementById("copyAllBtn").addEventListener("click", () => {
-  copyText(`${promptBox.value.trim()}\n\n${extractBox.value}`);
+  copyText(`${fullPrompt().trim()}\n\n${extractBox.value}`);
 });
 document.getElementById("downloadTxtBtn").addEventListener("click", () => {
   if (!extracted || !sourceFile) return;
@@ -814,6 +960,7 @@ bindImageTools({
   applyExtract: (next) => {
     extracted = next;
     autoSelectDirection(next.text);
+    refreshRules();
     extractBox.value = next.text;
     extractMeta.textContent = extractSummary(next);
     resultBlob = null;
@@ -833,6 +980,31 @@ directionSelect.addEventListener("change", () => {
   setDirection(directionSelect.value);
 });
 populateDirectionSelect();
+
+// Options: any change rebuilds the rules shown under the prompt.
+populateOptions();
+for (const el of [styleSelect, amountUnitSelect]) {
+  el.addEventListener("change", () => {
+    storeOptions();
+    refreshRules();
+  });
+}
+glossaryBox.addEventListener("input", () => {
+  storeOptions();
+  refreshRules();
+});
+fxEnabled.addEventListener("change", async () => {
+  refreshRules();
+  // first time on: fill in the latest rate so it is not left empty
+  if (fxEnabled.checked && !validFxRate(fxRate.value)) await fetchFxRate();
+});
+fxRate.addEventListener("input", () => {
+  fxOrigin = { name: "", site: "", date: "" };
+  fxFetchFailed = false;
+  refreshRules();
+});
+fxFetchBtn.addEventListener("click", fetchFxRate);
+refreshRules();
 document.getElementById("resetPromptBtn").addEventListener("click", () => {
   promptBox.value = defaultPrompt();
   storePrompt(promptBox.value);

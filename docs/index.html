@@ -227,6 +227,36 @@
       color: var(--text);
     }
     .opt input.custom-font { margin-top: 0.4rem; }
+    .check { display: flex; align-items: center; gap: 0.5rem; font-size: 0.9rem; margin: 0.5rem 0 0; }
+    .fx-rate-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.5rem;
+      margin: 0.5rem 0 0.35rem;
+      font-size: 0.9rem;
+    }
+    .fx-rate-row input {
+      width: 8rem;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.4rem 0.6rem;
+      font: inherit;
+      font-size: 0.9rem;
+      background: var(--bg);
+      color: var(--text);
+    }
+    .fx-note {
+      margin: 0 0 0.75rem;
+      padding: 0.5rem 0.75rem;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      background: var(--warn-bg);
+      color: var(--warn-text);
+    }
+    .glossary-box { margin: 0.5rem 0 0.75rem; font-size: 0.9rem; }
+    .glossary-box summary { cursor: pointer; margin-bottom: 0.4rem; }
+    .glossary-box textarea { min-height: 5rem; }
     .opt select:disabled,
     .opt input:disabled { opacity: 0.45; }
     .font-preview {
@@ -497,11 +527,41 @@
         </div>
       </div>
       <p class="meta" id="directionNote" hidden></p>
-      <label for="promptBox">翻訳プロンプト<span class="hint">（編集できます。文体を変えたい場合はここを書き換えてください。方向ごとに、編集した内容がこのブラウザに保存されます。方向はファイルの内容から自動で選ばれます）</span></label>
+      <div class="opt-row" id="jaStyleRow">
+        <div class="opt">
+          <label for="styleSelect">本文の文体</label>
+          <select id="styleSelect"></select>
+        </div>
+        <div class="opt">
+          <label for="amountUnitSelect">金額の単位</label>
+          <select id="amountUnitSelect"></select>
+        </div>
+      </div>
+      <div class="fx-box">
+        <label class="check"><input type="checkbox" id="fxEnabled"><span id="fxLabel">為替換算する</span></label>
+        <div id="fxFields" hidden>
+          <div class="fx-rate-row">
+            <span>1 USD =</span>
+            <input type="number" id="fxRate" min="0" step="0.01" inputmode="decimal" aria-label="1 米ドルあたりの円">
+            <span>JPY</span>
+            <button type="button" id="fxFetchBtn">最新のレートを取得</button>
+          </div>
+          <p class="meta" id="fxSource"></p>
+          <p class="fx-note" id="fxNote">換算は LLM が計算するため、桁違いや丸めの誤りが起こりえます。レートは目安で、実際の取引レートとは異なります。換算した金額には「約」（英語では「~」）が付き、換算前の金額や注記は訳文に入りません。レートと時点を資料に明記する場合は、スライド側で追記してください。書き戻す前に、換算した金額を必ず確認してください。</p>
+        </div>
+      </div>
+      <details class="glossary-box">
+        <summary>用語集（訳語の指定、訳さない語）</summary>
+        <textarea id="glossaryBox" class="prompt-box" placeholder="Notable Event = 注目すべきイベント&#10;Splunk"></textarea>
+        <span class="hint">1 行に 1 語。「原語 = 訳語」で訳語を指定し、語だけを書くと訳さず原文のまま残します。内容はこのブラウザに保存されます。</span>
+      </details>
+      <label for="promptBox">翻訳プロンプト<span class="hint">（編集できます。文体、金額、為替、用語集は上の選択から作られるルールが優先されます。方向ごとに、編集した内容がこのブラウザに保存されます。方向はファイルの内容から自動で選ばれます）</span></label>
       <textarea id="promptBox" class="prompt-box"></textarea>
       <div class="row">
         <button type="button" id="resetPromptBtn">プロンプトを既定に戻す</button>
       </div>
+      <label for="rulesBox" style="display:block;margin-top:0.75rem;">プロンプトに追加されるルール<span class="hint">（上の選択から自動で作られます。編集はできません）</span></label>
+      <textarea id="rulesBox" class="preview-box" readonly></textarea>
       <label for="extractBox" style="display:block;margin-top:0.75rem;">抽出テキスト</label>
       <textarea id="extractBox" class="preview-box" readonly></textarea>
       <div class="row">
@@ -597,7 +657,7 @@
           if (data.version) version = data.version;
         }
       } catch (_) {}
-      for (const file of ["pptx-text.js", "docx-text.js", "pdf-rewrite.js", "pdf-text.js", "image-text.js", "image-panel.js", "app.js"]) {
+      for (const file of ["pptx-text.js", "prompt-options.js", "docx-text.js", "pdf-rewrite.js", "pdf-text.js", "image-text.js", "image-panel.js", "app.js"]) {
         await new Promise((resolve, reject) => {
           const script = document.createElement("script");
           script.src = `${file}?v=${encodeURIComponent(version)}`;
