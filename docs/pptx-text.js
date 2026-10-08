@@ -28,8 +28,9 @@ const STRIP_TAG_RE = /(?:\[\/?\d+\]|⟦\/?\d+⟧)/g;
 // same pattern without /g, so .test() does not carry lastIndex between calls
 const TAG_LIKE_RE = /(?:\[\/?\d+\]|⟦\/?\d+⟧)/;
 
-// Translation direction. "en-ja" is the default and keeps the prompt that
-// shipped before directions existed.
+// Translation direction. "en-ja" is the default. These are the base prompts the
+// user can edit; writing style, amounts, exchange rate and the glossary come
+// from the options (prompt-options.js) and are appended to them.
 const DEFAULT_DIRECTION = "en-ja";
 const TRANSLATION_DIRECTIONS = [
   { id: "en-ja", label: "英語 → 日本語" },
@@ -45,9 +46,8 @@ const TRANSLATION_PROMPTS = {
 3. 入力の行構造(uid 行 → 本文行)を厳密に保つ。
 4. 出力は翻訳結果のテキストのみ。前置き・解説を付けない。出力結果はコードブロックとし、改行も適切に維持する。
 5. 製品名・固有名詞のみ原文のまま残す。それ以外の英文はすべて日本語に訳す。一般語・説明文・見出し・ラベルを英語のまま残さない。
-6. 文体は常体(だ・である調)で統一する。見出しや短い名詞句は体言止めを適切に用いる。
-7. 訳文が対応するタグの範囲からはみ出さないようにする(各タグ内は、その原文に対応する訳のみを入れる)。
-8. 訳漏れを避ける。各 uid の本文行に英文が残る場合、製品名・固有名詞でない限り必ず訳す。
+6. 訳文が対応するタグの範囲からはみ出さないようにする(各タグ内は、その原文に対応する訳のみを入れる)。
+7. 訳漏れを避ける。各 uid の本文行に英文が残る場合、製品名・固有名詞でない限り必ず訳す。
 `,
   "ja-en": `あなたはプロのローカライズ翻訳者です。以下のファイルの抽出テキストを英語に翻訳してください。
 
@@ -305,22 +305,18 @@ function setRunFont(run, typeface) {
   if (!typeface) return;
   const rPr = ensureRPr(run);
   const doc = rPr.ownerDocument;
-  let previous = null;
-  // latin covers ASCII, ea the Japanese glyphs, cs complex scripts
-  for (const name of ["latin", "ea", "cs"]) {
-    let el = firstChildLocal(rPr, name);
-    if (!el) {
-      el = doc.createElementNS(NS_A, `a:${name}`);
-      if (previous) {
-        rPr.insertBefore(el, previous.nextSibling);
-      } else {
-        const anchor = elementChildren(rPr).find((child) => RPR_AFTER_FONTS.includes(child.localName));
-        rPr.insertBefore(el, anchor || null);
-      }
-    }
+  // latin covers ASCII, ea the Japanese glyphs, cs complex scripts. The schema
+  // order is latin, ea, cs. A run that already has some of them (say only cs, or
+  // ea + cs) must be put back in that order, or PowerPoint ignores the ones that
+  // are out of place and the old font shows.
+  const fonts = ["latin", "ea", "cs"].map((name) => {
+    const el = firstChildLocal(rPr, name) || doc.createElementNS(NS_A, `a:${name}`);
     el.setAttribute("typeface", typeface);
-    previous = el;
-  }
+    if (el.parentNode === rPr) rPr.removeChild(el);
+    return el;
+  });
+  const anchor = elementChildren(rPr).find((child) => RPR_AFTER_FONTS.includes(child.localName));
+  for (const el of fonts) rPr.insertBefore(el, anchor || null);
 }
 
 // Same roles PPT Finalizer treats as the title when unifying fonts.
@@ -664,6 +660,8 @@ function collectFromTxBody(txBody, extra, texts, metadata, uidRef) {
   });
 }
 
+// extra.title marks the paragraphs of a title placeholder, so the prompt can
+// name them (a polite body style still wants titles as noun phrases).
 function collectFromShape(el, shapePath, slidePath, texts, metadata, uidRef) {
   const tbl = el.localName === "graphicFrame" ? findTable(el) : null;
   if (tbl) {
@@ -685,7 +683,7 @@ function collectFromShape(el, shapePath, slidePath, texts, metadata, uidRef) {
   if (!txBody) return;
   collectFromTxBody(
     txBody,
-    { type: "shape", slidePath, shapePath },
+    { type: "shape", slidePath, shapePath, title: isTitleShape(el) },
     texts,
     metadata,
     uidRef
