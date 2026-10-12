@@ -1,4 +1,4 @@
-// Prompt options: the writing-style, amount, exchange-rate and glossary choices
+// Prompt options: the writing-style, amount and exchange-rate choices
 // turn into a "表記ルール" section that is appended to the editable base prompt.
 // Pure functions only, so they run in the browser and in Node tests.
 
@@ -14,7 +14,7 @@ const PROMPT_AMOUNT_UNITS = [
   { id: "man", label: "万・億（日本語の表記）" },
 ];
 
-const DEFAULT_PROMPT_OPTIONS = { style: "plain", amountUnit: "kmb", glossary: "" };
+const DEFAULT_PROMPT_OPTIONS = { style: "plain", amountUnit: "kmb" };
 
 const RULES_HEADER = "# 表記ルール（上のルールと食い違う場合は、こちらを優先する）";
 
@@ -55,23 +55,6 @@ function parseFxResponse(sourceId, json) {
     return { rate, date: new Date(unix * 1000).toISOString().slice(0, 10) };
   }
   return null;
-}
-
-// One term per line: "term = translation" (also → or a tab), or just "term"
-// to keep it untranslated. Blank lines and lines starting with # are skipped.
-function parseGlossary(text) {
-  const entries = [];
-  for (const raw of String(text || "").split(/\r?\n/)) {
-    const line = raw.trim();
-    if (!line || line.startsWith("#")) continue;
-    const match = line.match(/^(.*?)\s*(?:=|＝|→|->|\t)\s*(.*)$/);
-    if (match && match[1].trim()) {
-      entries.push({ term: match[1].trim(), translation: match[2].trim() });
-    } else {
-      entries.push({ term: line, translation: "" });
-    }
-  }
-  return entries;
 }
 
 function styleRule(style, titleIds) {
@@ -130,20 +113,8 @@ function fxRule(direction, fx) {
   ].join("\n");
 }
 
-function glossaryRule(glossary) {
-  const entries = parseGlossary(glossary);
-  if (!entries.length) return "";
-  const lines = ["用語集: 次の語は、指定のとおりに扱う。"];
-  for (const { term, translation } of entries) {
-    lines.push(translation
-      ? `   - ${term} → ${translation}(必ずこの訳語を使う)`
-      : `   - ${term}(訳さず、原文のまま残す)`);
-  }
-  return lines.join("\n");
-}
-
 // options: { direction, style, amountUnit, titleIds, fx: { enabled, rate, date,
-// source }, glossary }. Returns the "表記ルール" section, or "" when empty.
+// source } }. Returns the "表記ルール" section, or "" when empty.
 function buildPromptRules(options) {
   const opts = options || {};
   const direction = opts.direction === "ja-en" ? "ja-en" : "en-ja";
@@ -152,8 +123,6 @@ function buildPromptRules(options) {
   rules.push(amountRule(direction, opts.amountUnit));
   const fx = fxRule(direction, opts.fx);
   if (fx) rules.push(fx);
-  const glossary = glossaryRule(opts.glossary);
-  if (glossary) rules.push(glossary);
   return `${RULES_HEADER}\n${rules.map((rule, i) => `${i + 1}. ${rule}`).join("\n")}\n`;
 }
 
@@ -170,7 +139,6 @@ const promptOptionsApi = {
   FX_SOURCES,
   validFxRate,
   parseFxResponse,
-  parseGlossary,
   buildPromptRules,
   buildFullPrompt,
 };

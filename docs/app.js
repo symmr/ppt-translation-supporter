@@ -47,8 +47,8 @@ const fxFields = document.getElementById("fxFields");
 const fxRate = document.getElementById("fxRate");
 const fxFetchBtn = document.getElementById("fxFetchBtn");
 const fxSource = document.getElementById("fxSource");
-const glossaryBox = document.getElementById("glossaryBox");
 const rulesBox = document.getElementById("rulesBox");
+const promptEdited = document.getElementById("promptEdited");
 // Where the rate in the box came from; typing a rate by hand clears it.
 let fxOrigin = { name: "", site: "", date: "" };
 let fxFetchFailed = false;
@@ -269,7 +269,7 @@ function setDirection(next) {
   refreshRules();
 }
 
-// Style, amount unit and glossary are preferences and are kept in the browser.
+// Style and amount unit are preferences and are kept in the browser.
 // The exchange rate is not: it goes stale.
 function loadOptions() {
   let saved = {};
@@ -282,7 +282,6 @@ function loadOptions() {
   return {
     style: pick(PROMPT_STYLES, saved.style, DEFAULT_PROMPT_OPTIONS.style),
     amountUnit: pick(PROMPT_AMOUNT_UNITS, saved.amountUnit, DEFAULT_PROMPT_OPTIONS.amountUnit),
-    glossary: typeof saved.glossary === "string" ? saved.glossary : "",
   };
 }
 
@@ -291,7 +290,6 @@ function storeOptions() {
     localStorage.setItem(OPTIONS_STORAGE_KEY, JSON.stringify({
       style: styleSelect.value,
       amountUnit: amountUnitSelect.value,
-      glossary: glossaryBox.value,
     }));
   } catch (_) {
     // a browser with storage blocked still works, the options just won't persist
@@ -306,7 +304,6 @@ function populateOptions() {
   const saved = loadOptions();
   styleSelect.value = saved.style;
   amountUnitSelect.value = saved.amountUnit;
-  glossaryBox.value = saved.glossary;
 }
 
 function titleIds() {
@@ -355,8 +352,14 @@ function refreshRules() {
     amountUnit: amountUnitSelect.value,
     titleIds: titleIds(),
     fx: fxOptions(),
-    glossary: glossaryBox.value,
   });
+  syncFoldBadges();
+}
+
+// The prompt sits in a folded section, so its summary shows when an edit
+// changes what gets copied.
+function syncFoldBadges() {
+  promptEdited.textContent = promptBox.value === defaultPrompt() ? "" : "編集済み";
 }
 
 // What gets copied: the editable prompt followed by the generated rules.
@@ -584,6 +587,7 @@ async function handlePptx(file) {
   autoSelectDirection(extracted.text);
   refreshRules();
   promptBox.value = loadStoredPrompt() || defaultPrompt();
+  syncFoldBadges();
   extractBox.value = extracted.text;
   resetFontPickers(deckFonts);
   syncOutputUi();
@@ -969,7 +973,10 @@ bindImageTools({
   },
 });
 
-promptBox.addEventListener("input", () => storePrompt(promptBox.value));
+promptBox.addEventListener("input", () => {
+  storePrompt(promptBox.value);
+  syncFoldBadges();
+});
 // Each direction keeps its own edited prompt; switching shows that one.
 directionSelect.addEventListener("change", () => {
   directionPinned = true;
@@ -985,10 +992,6 @@ for (const el of [styleSelect, amountUnitSelect]) {
     refreshRules();
   });
 }
-glossaryBox.addEventListener("input", () => {
-  storeOptions();
-  refreshRules();
-});
 fxEnabled.addEventListener("change", async () => {
   refreshRules();
   // first time on: fill in the latest rate so it is not left empty
@@ -1004,6 +1007,7 @@ refreshRules();
 document.getElementById("resetPromptBtn").addEventListener("click", () => {
   promptBox.value = defaultPrompt();
   storePrompt(promptBox.value);
+  syncFoldBadges();
   show(okMsg, "プロンプトを既定に戻しました");
 });
 

@@ -29,8 +29,8 @@ const STRIP_TAG_RE = /(?:\[\/?\d+\]|⟦\/?\d+⟧)/g;
 const TAG_LIKE_RE = /(?:\[\/?\d+\]|⟦\/?\d+⟧)/;
 
 // Translation direction. "en-ja" is the default. These are the base prompts the
-// user can edit; writing style, amounts, exchange rate and the glossary come
-// from the options (prompt-options.js) and are appended to them.
+// user can edit; writing style, amounts and exchange rate come from the
+// options (prompt-options.js) and are appended to them.
 const DEFAULT_DIRECTION = "en-ja";
 const TRANSLATION_DIRECTIONS = [
   { id: "en-ja", label: "英語 → 日本語" },

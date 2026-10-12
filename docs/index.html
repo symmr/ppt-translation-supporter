@@ -289,9 +289,48 @@
       background: var(--warn-bg);
       color: var(--warn-text);
     }
-    .glossary-box { margin: 0.5rem 0 0.75rem; font-size: 0.9rem; }
-    .glossary-box summary { cursor: pointer; margin-bottom: 0.4rem; }
-    .glossary-box textarea { min-height: 5rem; }
+    .source-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.5rem 1rem;
+      margin-bottom: 0.9rem;
+    }
+    .source-row .meta { margin: 0; }
+    .opt-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+      gap: 0.75rem;
+    }
+    #jaStyleRow { display: contents; }
+    #jaStyleRow[hidden] { display: none; }
+    .opt-toggles {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: flex-start;
+      gap: 0.5rem 1.5rem;
+      margin-top: 0.75rem;
+    }
+    .opt-toggles .check { margin: 0; }
+    .fold { font-size: 0.9rem; }
+    .fold summary { cursor: pointer; color: var(--muted); }
+    .fold summary:hover { color: var(--text); }
+    .fold[open] summary { margin-bottom: 0.5rem; }
+    .count {
+      margin-left: 0.4rem;
+      padding: 0 0.4rem;
+      border-radius: 999px;
+      background: var(--drop);
+      color: var(--accent);
+      font-size: 0.75rem;
+    }
+    .count:empty { display: none; }
+    .fx-box { flex-basis: 100%; }
+    .fx-box .fx-rate-row { margin-top: 0; }
+    .copy-row { margin-top: 1.1rem; }
+    .prompt-fold { margin-top: 0.9rem; }
+    .prompt-fold label { display: block; margin: 0.75rem 0 0.2rem; }
+    .prompt-fold summary + label { margin-top: 0; }
     .opt select:disabled,
     .opt input:disabled { opacity: 0.45; }
     .font-preview {
@@ -488,10 +527,11 @@
         <span class="step-num">2</span>
         <h2>LLM 用にコピー</h2>
       </div>
-      <div id="imageTools">
-        <div class="row">
+      <div class="source-row">
+        <div id="imageTools">
           <button type="button" id="openImageBtn">画像からテキスト抽出</button>
         </div>
+        <p class="meta" id="extractMeta"></p>
       </div>
       <div id="imagePanel" hidden>
         <div id="imageList" class="image-list"></div>
@@ -545,26 +585,25 @@
           </div>
         </div>
       </dialog>
-      <p class="meta" id="extractMeta"></p>
-      <div class="opt-row">
+      <div class="opt-grid">
         <div class="opt">
           <label for="directionSelect">翻訳の方向</label>
           <select id="directionSelect"></select>
         </div>
-      </div>
-      <div class="opt-row" id="jaStyleRow">
-        <div class="opt">
-          <label for="styleSelect">本文の文体</label>
-          <select id="styleSelect"></select>
+        <div id="jaStyleRow">
+          <div class="opt">
+            <label for="styleSelect">文体</label>
+            <select id="styleSelect"></select>
+          </div>
+          <div class="opt">
+            <label for="amountUnitSelect">金額の単位</label>
+            <select id="amountUnitSelect"></select>
+          </div>
         </div>
-        <div class="opt">
-          <label for="amountUnitSelect">金額の単位</label>
-          <select id="amountUnitSelect"></select>
-        </div>
       </div>
-      <div class="fx-box">
+      <div class="opt-toggles">
         <label class="check"><input type="checkbox" id="fxEnabled"><span id="fxLabel">為替換算する</span></label>
-        <div id="fxFields" hidden>
+        <div id="fxFields" class="fx-box" hidden>
           <div class="fx-rate-row">
             <span>1 USD =</span>
             <input type="number" id="fxRate" min="0" step="0.01" inputmode="decimal" aria-label="1 米ドルあたりの円">
@@ -575,25 +614,23 @@
           <p class="fx-note note" id="fxNote"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>換算は LLM の計算です。書き戻す前に金額を確認してください</p>
         </div>
       </div>
-      <details class="glossary-box">
-        <summary>用語集</summary>
-        <textarea id="glossaryBox" class="prompt-box" placeholder="Notable Event = 注目すべきイベント&#10;Splunk"></textarea>
-        <span class="hint">原語 = 訳語　語だけの行は訳さずに残す</span>
-      </details>
-      <label for="promptBox">翻訳プロンプト</label>
-      <textarea id="promptBox" class="prompt-box"></textarea>
-      <div class="row">
-        <button type="button" id="resetPromptBtn">プロンプトを既定に戻す</button>
-      </div>
-      <label for="rulesBox" style="display:block;margin-top:0.75rem;">追加ルール</label>
-      <textarea id="rulesBox" class="preview-box" readonly></textarea>
-      <label for="extractBox" style="display:block;margin-top:0.75rem;">抽出テキスト</label>
-      <textarea id="extractBox" class="preview-box" readonly></textarea>
-      <div class="row">
+      <div class="row copy-row">
         <button type="button" class="primary" id="copyAllBtn">プロンプト＋本文をコピー</button>
         <button type="button" id="copyPromptBtn">プロンプトをコピー</button>
         <button type="button" id="downloadTxtBtn">抽出テキストをダウンロード</button>
       </div>
+      <details class="fold prompt-fold">
+        <summary>プロンプトと本文を確認<span class="count" id="promptEdited"></span></summary>
+        <label for="promptBox">翻訳プロンプト</label>
+        <textarea id="promptBox" class="prompt-box"></textarea>
+        <div class="row">
+          <button type="button" id="resetPromptBtn">プロンプトを既定に戻す</button>
+        </div>
+        <label for="rulesBox">追加ルール</label>
+        <textarea id="rulesBox" class="preview-box" readonly></textarea>
+        <label for="extractBox">抽出テキスト</label>
+        <textarea id="extractBox" class="preview-box" readonly></textarea>
+      </details>
     </section>
 
     <section class="step is-wait" id="step3" hidden>
