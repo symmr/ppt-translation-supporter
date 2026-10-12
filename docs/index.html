@@ -328,6 +328,10 @@
     .fx-box { flex-basis: 100%; }
     .fx-box .fx-rate-row { margin-top: 0; }
     .copy-row { margin-top: 1.1rem; }
+    .fold-value { margin-left: 0.6rem; color: var(--text); }
+    #pdfOutputRow { margin-bottom: 0.75rem; }
+    #pdfOutputRow .opt { flex: 0 1 24rem; }
+    .paste-label { display: block; margin: 0.9rem 0 0.2rem; }
     .prompt-fold { margin-top: 0.9rem; }
     .prompt-fold label { display: block; margin: 0.75rem 0 0.2rem; }
     .prompt-fold summary + label { margin-top: 0; }
@@ -645,26 +649,28 @@
           </select>
         </div>
       </div>
-      <div class="opt-row" id="fontRow">
-        <div class="opt">
-          <label for="titleFontSelect">タイトル</label>
-          <select id="titleFontSelect"></select>
-          <input id="titleCustomFont" type="text" class="custom-font" hidden
-            placeholder="フォント名を入力" autocomplete="off" spellcheck="false"
-            aria-label="タイトル用フォント名（自由入力）">
-          <p class="font-preview" id="titleFontPreview">見出し Sample あいう ABC 123</p>
+      <details class="fold font-fold" id="fontRow">
+        <summary>フォント<span class="fold-value" id="fontSummary"></span></summary>
+        <div class="opt-row">
+          <div class="opt">
+            <label for="titleFontSelect">タイトル</label>
+            <select id="titleFontSelect"></select>
+            <input id="titleCustomFont" type="text" class="custom-font" hidden
+              placeholder="フォント名を入力" autocomplete="off" spellcheck="false"
+              aria-label="タイトル用フォント名（自由入力）">
+            <p class="font-preview" id="titleFontPreview">見出し Sample あいう ABC 123</p>
+          </div>
+          <div class="opt">
+            <label for="bodyFontSelect">本文</label>
+            <select id="bodyFontSelect"></select>
+            <input id="bodyCustomFont" type="text" class="custom-font" hidden
+              placeholder="フォント名を入力" autocomplete="off" spellcheck="false"
+              aria-label="本文用フォント名（自由入力）">
+            <p class="font-preview" id="bodyFontPreview">本文 Sample あいう ABC 123</p>
+          </div>
         </div>
-        <div class="opt">
-          <label for="bodyFontSelect">本文</label>
-          <select id="bodyFontSelect"></select>
-          <input id="bodyCustomFont" type="text" class="custom-font" hidden
-            placeholder="フォント名を入力" autocomplete="off" spellcheck="false"
-            aria-label="本文用フォント名（自由入力）">
-          <p class="font-preview" id="bodyFontPreview">本文 Sample あいう ABC 123</p>
-        </div>
-      </div>
-
-      <label for="pasteBox" style="display:block;margin-top:0.9rem;">LLM の返答を貼り付け</label>
+      </details>
+      <label for="pasteBox" class="paste-label">LLM の返答を貼り付け</label>
       <textarea id="pasteBox" class="preview-box" placeholder="uid_0001&#10;訳文&#10;uid_0002&#10;…"></textarea>
       <div class="row">
         <button type="button" class="primary" id="applyPasteBtn">書き戻す</button>

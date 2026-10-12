@@ -27,6 +27,7 @@ const imageTools = document.getElementById("imageTools");
 const pdfOutputRow = document.getElementById("pdfOutputRow");
 const pdfOutputSelect = document.getElementById("pdfOutputSelect");
 const fontRow = document.getElementById("fontRow");
+const fontSummary = document.getElementById("fontSummary");
 
 const KEEP_VALUE = "";
 const CUSTOM_VALUE = "__custom__";
@@ -183,6 +184,19 @@ function updateFontPreview(selectEl, customInput, previewEl) {
   const font = fontFromPicker(selectEl, customInput);
   previewEl.style.fontFamily = font ? `"${font}", sans-serif` : "";
   previewEl.hidden = !font;
+  syncFontSummary();
+}
+
+// The pickers sit in a folded section; its summary names the fonts in use.
+function syncFontSummary() {
+  const label = (selectEl, customInput) => {
+    const font = fontFromPicker(selectEl, customInput);
+    if (selectEl.value === KEEP_VALUE) return "元のまま";
+    return font || "未入力";
+  };
+  const title = label(titleFontSelect, titleCustomFont);
+  const body = label(bodyFontSelect, bodyCustomFont);
+  fontSummary.textContent = title === body ? title : `タイトル ${title}　本文 ${body}`;
 }
 
 function bindFontPicker(selectEl, customInput, previewEl) {
