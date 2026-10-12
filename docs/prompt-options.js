@@ -1,4 +1,4 @@
-// Prompt options: the writing-style, amount and exchange-rate choices
+// Prompt options: the writing-style, amount, exchange-rate and glossary choices
 // turn into a "表記ルール" section that is appended to the editable base prompt.
 // Pure functions only, so they run in the browser and in Node tests.
 
@@ -113,8 +113,129 @@ function fxRule(direction, fx) {
   ].join("\n");
 }
 
+// Glossary: a two-column CSV, English then Japanese. One file serves both
+// directions; the source column follows the translation direction. Only the
+// terms found in the extracted text go into the prompt, so a long glossary
+// does not crowd it.
+const GLOSSARY_TEMPLATE = [
+  "英語,日本語",
+  "Notable Event,注目すべきイベント",
+  "risk-based alerting,リスクベースアラート",
+  "Splunk,",
+].join("\r\n") + "\r\n";
+
+function parseCsvRows(text) {
+  const rows = [];
+  let row = [];
+  let cell = "";
+  let quoted = false;
+  const src = String(text || "").replace(/^\uFEFF/, "");
+  for (let i = 0; i < src.length; i++) {
+    const ch = src[i];
+    if (quoted) {
+      if (ch === '"' && src[i + 1] === '"') {
+        cell += '"';
+        i++;
+      } else if (ch === '"') {
+        quoted = false;
+      } else {
+        cell += ch;
+      }
+    } else if (ch === '"') {
+      quoted = true;
+    } else if (ch === ",") {
+      row.push(cell);
+      cell = "";
+    } else if (ch === "\n" || ch === "\r") {
+      if (ch === "\r" && src[i + 1] === "\n") i++;
+      row.push(cell);
+      rows.push(row);
+      row = [];
+      cell = "";
+    } else {
+      cell += ch;
+    }
+  }
+  if (cell || row.length) {
+    row.push(cell);
+    rows.push(row);
+  }
+  return rows;
+}
+
+const GLOSSARY_HEADER_EN = /^(英語|english|en)$/i;
+const GLOSSARY_HEADER_JA = /^(日本語|japanese|ja|jp)$/i;
+
+// Returns [{ en, ja }]. A header row ("英語,日本語") is optional; blank rows and
+// rows starting with # are skipped.
+function parseGlossaryCsv(text) {
+  const entries = [];
+  const rows = parseCsvRows(text);
+  rows.forEach((cells, index) => {
+    const en = (cells[0] || "").trim();
+    const ja = (cells[1] || "").trim();
+    if (!en && !ja) return;
+    if (en.startsWith("#")) return;
+    if (index === 0 && GLOSSARY_HEADER_EN.test(en) && GLOSSARY_HEADER_JA.test(ja)) return;
+    entries.push({ en, ja });
+  });
+  return entries;
+}
+
+// Folds the spellings that differ without changing the word: full and half
+// width, case, spaces, the middle dot, and a long-vowel mark closing a
+// katakana word (サーバー and サーバ).
+function normalizeJa(text) {
+  return String(text || "")
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[\s・]+/g, "")
+    .replace(/([ァ-ヴ])ー+(?![ァ-ヴー])/g, "$1");
+}
+
+function escapeRegExp(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// English terms match whole words, in any case, with an optional plural s/es.
+function englishTermPattern(term) {
+  const body = escapeRegExp(term).replace(/\s+/g, "\\s+");
+  return new RegExp(`(?<![A-Za-z0-9])${body}(?:e?s)?(?![A-Za-z0-9])`, "i");
+}
+
+// Entries whose source-side term appears in the text. English to Japanese
+// looks for the English column, Japanese to English for the Japanese one.
+function matchGlossary(entries, text, direction) {
+  const list = entries || [];
+  if (direction === "ja-en") {
+    const haystack = normalizeJa(text);
+    return list.filter((e) => e.ja && haystack.includes(normalizeJa(e.ja)));
+  }
+  const haystack = String(text || "");
+  return list.filter((e) => e.en && englishTermPattern(e.en).test(haystack));
+}
+
+function glossaryRule(matched, direction) {
+  if (!matched || !matched.length) return "";
+  const toJa = direction !== "ja-en";
+  const targets = new Map();
+  for (const e of matched) {
+    const source = toJa ? e.en : e.ja;
+    const target = toJa ? e.ja : e.en;
+    if (!targets.has(source)) targets.set(source, []);
+    if (target && !targets.get(source).includes(target)) targets.get(source).push(target);
+  }
+  const lines = ["用語集: 次の語は、指定のとおりに訳す。"];
+  for (const [source, list] of targets) {
+    if (!list.length) lines.push(`   - ${source}(訳さず、原文のまま残す)`);
+    else if (list.length === 1) lines.push(`   - ${source} → ${list[0]}`);
+    else lines.push(`   - ${source} → ${list.join(" / ")}(文脈に合うものを使う)`);
+  }
+  return lines.join("\n");
+}
+
 // options: { direction, style, amountUnit, titleIds, fx: { enabled, rate, date,
-// source } }. Returns the "表記ルール" section, or "" when empty.
+// source }, glossary: matched entries }. Returns the "表記ルール" section, or "" when empty.
 function buildPromptRules(options) {
   const opts = options || {};
   const direction = opts.direction === "ja-en" ? "ja-en" : "en-ja";
@@ -123,6 +244,8 @@ function buildPromptRules(options) {
   rules.push(amountRule(direction, opts.amountUnit));
   const fx = fxRule(direction, opts.fx);
   if (fx) rules.push(fx);
+  const glossary = glossaryRule(opts.glossary, direction);
+  if (glossary) rules.push(glossary);
   return `${RULES_HEADER}\n${rules.map((rule, i) => `${i + 1}. ${rule}`).join("\n")}\n`;
 }
 
@@ -151,6 +274,10 @@ const promptOptionsApi = {
   buildPromptRules,
   buildFullPrompt,
   basePromptOf,
+  GLOSSARY_TEMPLATE,
+  parseGlossaryCsv,
+  normalizeJa,
+  matchGlossary,
 };
 
 if (typeof module !== "undefined" && module.exports) {
