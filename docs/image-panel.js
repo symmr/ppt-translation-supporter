@@ -205,7 +205,7 @@ function drawCrop(canvas, image, seg) {
   const sy = Math.max(0, seg.y0 - pad);
   const sw = Math.max(1, Math.min(image.naturalWidth, seg.x1 + pad) - sx);
   const sh = Math.max(1, Math.min(image.naturalHeight, seg.y1 + pad) - sy);
-  ctx.fillStyle = "#f5f5f4";
+  ctx.fillStyle = "#f1f2f3";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   const scale = Math.min(canvas.width / sw, canvas.height / sh);
   const dw = sw * scale;
@@ -704,8 +704,8 @@ function paintOverlay() {
     const y = frame.offsetY + rect.y0 * frame.scale;
     const w = (rect.x1 - rect.x0) * frame.scale;
     const h = (rect.y1 - rect.y0) * frame.scale;
-    ctx.fillStyle = "rgba(37, 99, 235, 0.18)";
-    ctx.strokeStyle = "#2563eb";
+    ctx.fillStyle = "rgba(38, 1, 253, 0.14)";
+    ctx.strokeStyle = "rgb(38, 1, 253)";
     ctx.lineWidth = 2;
     ctx.fillRect(x, y, w, h);
     ctx.strokeRect(x, y, w, h);
@@ -720,7 +720,7 @@ function drawClose(ctx, frame, x, y, w, id) {
   const cx = Math.min(frame.width - r, Math.max(r, x + w));
   const cy = Math.min(frame.height - r, Math.max(r, y));
   ctx.beginPath();
-  ctx.fillStyle = "#2563eb";
+  ctx.fillStyle = "rgb(38, 1, 253)";
   ctx.arc(cx, cy, r, 0, Math.PI * 2);
   ctx.fill();
   ctx.fillStyle = "#ffffff";
