@@ -899,9 +899,6 @@ document.getElementById("applyPasteBtn").addEventListener("click", () => {
   applyTranslation(pasteBox.value, "貼り付け");
 });
 
-document.getElementById("copyPromptBtn").addEventListener("click", () => {
-  copyText(fullPrompt());
-});
 document.getElementById("copyAllBtn").addEventListener("click", () => {
   copyText(`${fullPrompt().trim()}\n\n${extractBox.value}`);
 });
