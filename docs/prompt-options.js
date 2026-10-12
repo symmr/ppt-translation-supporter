@@ -132,6 +132,15 @@ function buildFullPrompt(basePrompt, rules) {
   return extra ? `${base}\n\n${extra}\n` : `${base}\n`;
 }
 
+// The prompt box shows the base prompt and the rules as one text. Everything
+// before the rules header is the user's base prompt; without the header the
+// whole text is.
+function basePromptOf(fullText) {
+  const text = String(fullText || "");
+  const at = text.indexOf(RULES_HEADER);
+  return `${(at < 0 ? text : text.slice(0, at)).trim()}\n`;
+}
+
 const promptOptionsApi = {
   PROMPT_STYLES,
   PROMPT_AMOUNT_UNITS,
@@ -141,6 +150,7 @@ const promptOptionsApi = {
   parseFxResponse,
   buildPromptRules,
   buildFullPrompt,
+  basePromptOf,
 };
 
 if (typeof module !== "undefined" && module.exports) {
