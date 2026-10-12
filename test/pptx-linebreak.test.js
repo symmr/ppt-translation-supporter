@@ -184,11 +184,33 @@ test("a translation that dropped the tags is flattened and reported", async () =
   assert.ok(para.lastIndexOf("</a:r>") < para.indexOf("<a:endParaRPr"));
 });
 
-test("text outside every tag is not guessed at", async () => {
+test("text outside every tag is kept with the formatting of the tag next to it", async () => {
   const zip = await buildEmphasisZip();
   const extracted = await extractTextsFromZip(zip);
   const translated = formatExtractFile(["uid_0001", "Intro [0]Teams[/0][1]premium prizes[/1][2].[/2]"]);
 
   const result = await injectTextsToZip(zip, parseUidDelimitedText(translated), extracted.metadata);
-  assert.deepEqual(result.flattened, ["uid_0001"]);
+  assert.deepEqual(result.flattened, []);
+
+  const para = firstParagraph(await zip.file("ppt/slides/slide1.xml").async("string"));
+  assert.match(para, /<a:t xml:space="preserve">Intro <\/a:t>/);
+  assert.match(para, /accent1/);
+});
+
+test("tags in a different order keep each phrase in its own formatting", async () => {
+  const zip = await buildEmphasisZip();
+  const extracted = await extractTextsFromZip(zip);
+  const translated = formatExtractFile(["uid_0001", "[1]豪華賞品[/1][0]は好成績のチームに[/0][2]。[/2]"]);
+
+  const result = await injectTextsToZip(zip, parseUidDelimitedText(translated), extracted.metadata);
+  assert.deepEqual(result.flattened, []);
+
+  const para = firstParagraph(await zip.file("ppt/slides/slide1.xml").async("string"));
+  const prize = para.indexOf("豪華賞品");
+  const team = para.indexOf("は好成績のチームに");
+  assert.ok(prize >= 0 && prize < team);
+  // the coloured phrase keeps its colour after moving to the front
+  const firstRun = para.slice(para.indexOf("<a:r>"), para.indexOf("</a:r>"));
+  assert.match(firstRun, /accent1/);
+  assert.match(firstRun, /豪華賞品/);
 });

@@ -147,3 +147,35 @@ test("lists raster pictures and replaces text boxes on that picture only", async
   const after = await extractDocxTexts(zip);
   assert.match(after.text, /Box/);
 });
+
+async function zipWithParagraph(paragraphXml) {
+  const zip = new JSZip();
+  zip.file("word/document.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="${NS.w}" xmlns:r="${NS.r}"><w:body>${paragraphXml}</w:body></w:document>`);
+  return zip;
+}
+
+test("runs follow the translation's tag order and keep their own formatting", async () => {
+  const zip = await zipWithParagraph('<w:p><w:r><w:rPr><w:b/></w:rPr><w:t>Reduce</w:t></w:r><w:r><w:t xml:space="preserve"> noise</w:t></w:r></w:p>');
+  const extracted = await extractDocxTexts(zip);
+  assert.deepEqual(extracted.lines, ["uid_0001", "[0]Reduce[/0][1] noise[/1]"]);
+
+  const result = await injectDocxTexts(zip, { uid_0001: "[1]ノイズ[/1]を[0]削減[/0]" }, extracted.metadata);
+  assert.deepEqual(result.flattened, []);
+  const xml = await zip.file("word/document.xml").async("string");
+  const runs = [...xml.matchAll(/<w:r>([\s\S]*?)<\/w:r>/g)].map((m) => [m[1].replace(/<[^>]+>/g, ""), /<w:b\/>/.test(m[1])]);
+  assert.deepEqual(runs, [["ノイズを", false], ["削減", true]]);
+});
+
+test("a reordered translation is flattened when a run sits inside a hyperlink", async () => {
+  const zip = await zipWithParagraph('<w:p><w:r><w:t>Read</w:t></w:r><w:hyperlink r:id="rId9"><w:r><w:t xml:space="preserve"> the guide</w:t></w:r></w:hyperlink></w:p>');
+  const extracted = await extractDocxTexts(zip);
+
+  const result = await injectDocxTexts(zip, { uid_0001: "[1]ガイド[/1]を[0]読む[/0]" }, extracted.metadata);
+  assert.deepEqual(result.flattened, ["uid_0001"]);
+  const again = await extractDocxTexts(zip);
+  assert.equal(again.lines[1].replace(/\[\/?\d+\]/g, ""), "ガイドを読む");
+  const xml = await zip.file("word/document.xml").async("string");
+  assert.match(xml, /<w:hyperlink r:id="rId9">/);
+});
+

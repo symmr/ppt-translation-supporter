@@ -279,22 +279,58 @@ function setDocxFont(run, font) {
   for (const name of ["ascii", "hAnsi", "eastAsia", "cs"]) wSet(fonts, name, font);
 }
 
+// The translation's tags in the order they appear, each with its text; text
+// outside the tags joins the tag before it (the first tag for leading text).
+// Null unless every one of the count tags appears exactly once.
+function orderedTagSegments(text, count) {
+  const found = [...text.matchAll(/\[(\d+)\]([\s\S]*?)\[\/\1\]/g)];
+  const indices = found.map((m) => Number(m[1]));
+  if (!found.length || found.length !== count || new Set(indices).size !== count || !indices.every((i) => i >= 0 && i < count)) {
+    return null;
+  }
+  const segments = found.map((m) => ({ index: Number(m[1]), text: m[2] }));
+  let pos = 0;
+  found.forEach((m, k) => {
+    const gap = text.slice(pos, m.index);
+    if (k === 0) segments[0].text = gap + segments[0].text;
+    else segments[k - 1].text += gap;
+    pos = m.index + m[0].length;
+  });
+  segments[segments.length - 1].text += text.slice(pos);
+  return segments;
+}
+
+// Puts the runs back into the slots the originals held, in the new order.
+function reorderInSlots(parent, originals, ordered) {
+  const doc = parent.ownerDocument;
+  const slots = originals.map((el) => {
+    const slot = doc.createElementNS(NS_W, "w:r");
+    parent.insertBefore(slot, el);
+    return slot;
+  });
+  for (const el of originals) parent.removeChild(el);
+  slots.forEach((slot, k) => parent.replaceChild(ordered[k], slot));
+}
+
 function setDocxParagraphText(p, translated, font) {
   const runs = textRuns(p).filter((run) => !runHasDrawing(run));
   const text = String(translated);
-  const matches = [];
-  const re = /\[(\d+)\]([\s\S]*?)\[\/\1\]/g;
-  let found;
-  while ((found = re.exec(text)) !== null) matches.push([Number(found[1]), found[2]]);
-  const indexed = matches.length === runs.length
-    && new Set(matches.map(([index]) => index)).size === runs.length
-    && matches.every(([index]) => index >= 0 && index < runs.length);
-  if (runs.length > 1 && indexed) {
-    for (const [index, value] of matches) {
-      writeRunText(runs[index], value);
-      setDocxFont(runs[index], font);
+  // The runs follow the translation's tag order, each keeping its own
+  // formatting. A run inside a hyperlink or a tracked insertion cannot leave
+  // its wrapper, so a reordered translation there is flattened rather than
+  // moving the link onto other words.
+  const segments = runs.length > 1 ? orderedTagSegments(text, runs.length) : null;
+  if (segments) {
+    const ordered = segments.map((seg) => runs[seg.index]);
+    const moved = ordered.some((run, k) => run !== runs[k]);
+    if (!moved || runs.every((run) => run.parentNode === p)) {
+      if (moved) reorderInSlots(p, runs, ordered);
+      segments.forEach((seg, k) => {
+        writeRunText(ordered[k], seg.text);
+        setDocxFont(ordered[k], font);
+      });
+      return { mode: "runs" };
     }
-    return { mode: "runs" };
   }
   if (!runs.length) return { mode: "missing" };
   const plain = runs.length > 1 ? text.replace(/(?:\[\/?\d+\])/g, "") : text;

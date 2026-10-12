@@ -311,3 +311,21 @@ test("parseUidDelimitedText ignores BOM and keeps blank body lines", () => {
   const parsed = parseUidDelimitedText(formatExtractFile(["uid_0001", "line1", "", "line3"]));
   assert.equal(parsed.uid_0001, "line1\n\nline3");
 });
+
+test("runs follow the translation's tag order and keep their own formatting", async () => {
+  const zip = await buildZip();
+  const path = "ppt/slides/slide1.xml";
+  const xml = await zip.file(path).async("string");
+  zip.file(path, xml.replace('<a:rPr lang="en-US"/><a:t>Red', '<a:rPr lang="en-US" b="1"/><a:t>Red'));
+  const extracted = await extractTextsFromZip(zip);
+  const ja = "uid_0002\n[1]青[/1]と[0]赤[/0]";
+
+  const result = await injectTextsToZip(zip, parseUidDelimitedText(ja), extracted.metadata);
+  assert.deepEqual(result.flattened, []);
+
+  const out = await zip.file(path).async("string");
+  const runs = [...out.matchAll(/<a:r>(<a:rPr[^>]*\/>)<a:t[^>]*>([^<]*)<\/a:t><\/a:r>/g)].map((m) => [m[2], /b="1"/.test(m[1])]);
+  const pair = runs.filter(([text]) => text === "青と" || text === "赤");
+  assert.deepEqual(pair, [["青と", false], ["赤", true]]);
+});
+

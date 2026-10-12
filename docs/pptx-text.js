@@ -37,29 +37,42 @@ const TRANSLATION_DIRECTIONS = [
   { id: "ja-en", label: "日本語 → 英語" },
 ];
 
+// Tags may be reordered: the writers place each tag's text with that tag's
+// formatting in the order the translation gives, so the prompt asks for a
+// natural word order rather than the source's.
 const TRANSLATION_PROMPTS = {
   "en-ja": `あなたはプロのローカライズ翻訳者です。以下のファイルの抽出テキストを日本語に翻訳してください。
 
 # 厳守するルール
 1. 「uid_0001」のような uid 行は、翻訳・改変・削除・並べ替えをせず、そのまま出力する。
-2. 「[0]...[/0]」のようなタグは、番号・個数・順序・開閉をすべて維持する。タグの中のテキストだけを翻訳し、タグ自体は一切追加・削除・変更しない。空のタグ([2][/2])もそのまま残す。
-3. 入力の行構造(uid 行 → 本文行)を厳密に保つ。
-4. 出力は翻訳結果のテキストのみ。前置き・解説を付けない。出力結果はコードブロックとし、改行も適切に維持する。
-5. 製品名・固有名詞のみ原文のまま残す。それ以外の英文はすべて日本語に訳す。一般語・説明文・見出し・ラベルを英語のまま残さない。
-6. 訳文が対応するタグの範囲からはみ出さないようにする(各タグ内は、その原文に対応する訳のみを入れる)。
-7. 訳漏れを避ける。各 uid の本文行に英文が残る場合、製品名・固有名詞でない限り必ず訳す。
+2. 「[0]...[/0]」のようなタグは、番号・個数・開閉をすべて維持する。タグの中のテキストだけを翻訳し、タグ自体は一切追加・削除・変更しない。空のタグ([2][/2])もそのまま残す。
+3. タグの並び順は、日本語として自然な語順になるよう入れ替えてよい。英語の語順に合わせた倒置にしない(例: [0]Reduce[/0][1] noise[/1] → [1]ノイズ[/1][0]を削減[/0]。「削減するノイズ」としない)。
+4. 入力の行構造(uid 行 → 本文行)を厳密に保つ。
+5. 出力は翻訳結果のテキストのみ。前置き・解説を付けない。出力結果はコードブロックとし、改行も適切に維持する。
+6. 製品名・固有名詞のみ原文のまま残す。それ以外の英文はすべて日本語に訳す。一般語・説明文・見出し・ラベルを英語のまま残さない。
+7. 各タグ内には、そのタグの原文に対応する訳だけを入れる。助詞などのつなぎの語も、どれかのタグの中に入れる。
+8. 訳漏れを避ける。各 uid の本文行に英文が残る場合、製品名・固有名詞でない限り必ず訳す。
+9. 出力する前に全体を見直し、次を確かめてから訳文だけを出力する(見直しの過程は出力しない)。
+   - 同じ原語を、全体で同じ訳語にそろえている
+   - すべての uid があり、タグの番号・個数・開閉が原文と一致している
+   - 直訳調や不自然な語順の文がない
 `,
   "ja-en": `あなたはプロのローカライズ翻訳者です。以下のファイルの抽出テキストを英語に翻訳してください。
 
 # 厳守するルール
 1. 「uid_0001」のような uid 行は、翻訳・改変・削除・並べ替えをせず、そのまま出力する。
-2. 「[0]...[/0]」のようなタグは、番号・個数・順序・開閉をすべて維持する。タグの中のテキストだけを翻訳し、タグ自体は一切追加・削除・変更しない。空のタグ([2][/2])もそのまま残す。
-3. 入力の行構造(uid 行 → 本文行)を厳密に保つ。
-4. 出力は翻訳結果のテキストのみ。前置き・解説を付けない。出力結果はコードブロックとし、改行も適切に維持する。
-5. 製品名・固有名詞のみ原文のまま残す。それ以外の日本語はすべて英語に訳す。一般語・説明文・見出し・ラベルを日本語のまま残さない。
-6. 自然で簡潔なビジネス・技術文書の英語(米国式)にする。見出しや短い項目は名詞句でまとめ、原文に句点がない行にピリオドを付けない。
-7. 訳文が対応するタグの範囲からはみ出さないようにする(各タグ内は、その原文に対応する訳のみを入れる)。語順の違いでタグの位置が入れ替わる場合も、タグの番号・個数・順序・開閉は原文のとおりに維持する。
-8. 訳漏れを避ける。各 uid の本文行に日本語が残る場合、製品名・固有名詞でない限り必ず訳す。全角の英数字・記号は半角にする。
+2. 「[0]...[/0]」のようなタグは、番号・個数・開閉をすべて維持する。タグの中のテキストだけを翻訳し、タグ自体は一切追加・削除・変更しない。空のタグ([2][/2])もそのまま残す。
+3. タグの並び順は、英語として自然な語順になるよう入れ替えてよい。日本語の語順に合わせた不自然な英語にしない(例: [0]ノイズを[/0][1]削減[/1] → [1]Reduce[/1][0] noise[/0])。
+4. 入力の行構造(uid 行 → 本文行)を厳密に保つ。
+5. 出力は翻訳結果のテキストのみ。前置き・解説を付けない。出力結果はコードブロックとし、改行も適切に維持する。
+6. 製品名・固有名詞のみ原文のまま残す。それ以外の日本語はすべて英語に訳す。一般語・説明文・見出し・ラベルを日本語のまま残さない。
+7. 自然で簡潔なビジネス・技術文書の英語(米国式)にする。見出しや短い項目は名詞句でまとめ、原文に句点がない行にピリオドを付けない。
+8. 各タグ内には、そのタグの原文に対応する訳だけを入れる。冠詞や前置詞などのつなぎの語も、どれかのタグの中に入れる。
+9. 訳漏れを避ける。各 uid の本文行に日本語が残る場合、製品名・固有名詞でない限り必ず訳す。全角の英数字・記号は半角にする。
+10. 出力する前に全体を見直し、次を確かめてから訳文だけを出力する(見直しの過程は出力しない)。
+   - 同じ原語を、全体で同じ訳語にそろえている
+   - すべての uid があり、タグの番号・個数・開閉が原文と一致している
+   - 直訳調や不自然な語順の文がない
 `,
 };
 
@@ -329,15 +342,48 @@ function isTitleShape(shape) {
   return TITLE_PH_TYPES.includes(phs[0].getAttribute("type") || "");
 }
 
-function collectTagMatches(text) {
-  const matches = [];
-  for (const re of [TAG_RE, TAG_RE_LEGACY]) {
-    re.lastIndex = 0;
-    let m;
-    while ((m = re.exec(text)) !== null) matches.push([m[1], m[2]]);
-    if (matches.length) break;
+// The translation's tags in the order they appear, each with its text. Text
+// the translator left between or around tags joins the tag before it (the
+// first tag for leading text), so a particle written outside a tag is kept.
+// Null unless every one of the count tags appears exactly once.
+function orderedTagSegments(text, count) {
+  const source = String(text);
+  for (const base of [TAG_RE, TAG_RE_LEGACY]) {
+    const found = [...source.matchAll(new RegExp(base.source, "g"))];
+    if (!found.length) continue;
+    const indices = found.map((m) => Number(m[1]));
+    if (
+      found.length !== count ||
+      new Set(indices).size !== count ||
+      !indices.every((i) => i >= 0 && i < count)
+    ) {
+      return null;
+    }
+    const segments = found.map((m) => ({ index: Number(m[1]), text: m[2] }));
+    let pos = 0;
+    found.forEach((m, k) => {
+      const gap = source.slice(pos, m.index);
+      if (k === 0) segments[0].text = gap + segments[0].text;
+      else segments[k - 1].text += gap;
+      pos = m.index + m[0].length;
+    });
+    segments[segments.length - 1].text += source.slice(pos);
+    return segments;
   }
-  return matches;
+  return null;
+}
+
+// Puts the given elements back into the slots the originals held, in the new
+// order, leaving any other children (fields, line breaks) where they were.
+function reorderInSlots(parent, originals, ordered) {
+  const doc = parent.ownerDocument;
+  const slots = originals.map((el) => {
+    const slot = doc.createElementNS(el.namespaceURI, el.nodeName);
+    el.parentNode.insertBefore(slot, el);
+    return slot;
+  });
+  for (const el of originals) el.parentNode.removeChild(el);
+  slots.forEach((slot, k) => slot.parentNode.replaceChild(ordered[k], slot));
 }
 
 // Tokens are { br: true, rPr } for a line break or { text, rPr } for a run,
@@ -386,8 +432,8 @@ function rewriteBrokenLines(paragraph, text) {
 
 // Rebuild a wrapped paragraph from a translation tagged like the extract: one
 // tag per formatting group, each tag's text written with that group's
-// formatting. Null when the tags do not line up with the groups, or when text
-// sits outside every tag, so the caller can fall back to flattening.
+// formatting, in the translation's tag order. Null when the tags do not line
+// up with the groups, so the caller can fall back to flattening.
 function tokensFromTaggedText(text, groups) {
   for (const base of [TAG_RE, TAG_RE_LEGACY]) {
     const found = [...String(text).matchAll(new RegExp(base.source, "g"))];
@@ -403,20 +449,22 @@ function tokensFromTaggedText(text, groups) {
     const tokens = [];
     let pos = 0;
     let lastRPr = groups[indices[0]].rPr;
-    // Line breaks the translator left between two tags are kept; any other
-    // text there belongs to no group.
+    // Line breaks the translator left between two tags are kept, and any
+    // other text there takes the formatting of the tag before it.
     const pushGap = (gap) => {
-      if (gap.trim()) return false;
+      if (gap.trim()) {
+        pushTextTokens(tokens, gap, lastRPr, true);
+        return;
+      }
       for (let n = gap.split("\n").length - 1; n > 0; n -= 1) tokens.push({ br: true, rPr: lastRPr });
-      return true;
     };
     for (const m of found) {
-      if (!pushGap(String(text).slice(pos, m.index))) return null;
+      pushGap(String(text).slice(pos, m.index));
       lastRPr = groups[Number(m[1])].rPr;
       pushTextTokens(tokens, m[2], lastRPr, true);
       pos = m.index + m[0].length;
     }
-    if (!pushGap(String(text).slice(pos))) return null;
+    pushGap(String(text).slice(pos));
     return tokens;
   }
   return null;
@@ -466,17 +514,16 @@ function setParagraphText(paragraph, translatedText, options) {
     return { mode: "plain", artifact: TAG_LIKE_RE.test(text) };
   }
 
-  const matches = collectTagMatches(text);
-  const indices = matches.map(([i]) => Number(i));
   // Every run must be accounted for exactly once. A partial set means the
   // translation lost or renumbered tags, and honouring it would silently empty
-  // the runs it left out.
-  if (
-    matches.length === runs.length &&
-    new Set(indices).size === runs.length &&
-    indices.every((i) => i >= 0 && i < runs.length)
-  ) {
-    for (const [idxStr, seg] of matches) setRunText(runs[Number(idxStr)], seg);
+  // the runs it left out. The runs follow the translation's tag order, each
+  // keeping its own formatting, so a word order that differs from the source
+  // keeps every phrase in its colour.
+  const segments = orderedTagSegments(text, runs.length);
+  if (segments) {
+    const ordered = segments.map((seg) => runs[seg.index]);
+    if (ordered.some((run, k) => run !== runs[k])) reorderInSlots(paragraph, runs, ordered);
+    segments.forEach((seg, k) => setRunText(ordered[k], seg.text));
     return { mode: "runs" };
   }
 
