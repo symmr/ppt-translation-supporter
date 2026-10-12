@@ -13,6 +13,10 @@ const {
   buildPromptRules,
   buildFullPrompt,
   basePromptOf,
+  GLOSSARY_TEMPLATE,
+  parseGlossaryCsv,
+  normalizeJa,
+  matchGlossary,
 } = require("../docs/prompt-options.js");
 const { TRANSLATION_PROMPT, extractTextsFromZip } = require("../docs/pptx-text.js");
 
@@ -178,3 +182,41 @@ test("PPTX extraction marks title placeholders and leaves body text unmarked", a
   assert.notEqual(extracted.metadata[1].title, true);
 });
 
+test("parseGlossaryCsv reads two columns, with or without the header row", () => {
+  const csv = "\uFEFF英語,日本語\r\n\"Notable Event\",注目すべきイベント\n\"a, b\",\"x\"\"y\"\nSplunk,\n# memo,x\n\n";
+  assert.deepEqual(parseGlossaryCsv(csv), [
+    { en: "Notable Event", ja: "注目すべきイベント" },
+    { en: "a, b", ja: 'x"y' },
+    { en: "Splunk", ja: "" },
+  ]);
+  assert.deepEqual(parseGlossaryCsv("alert,アラート"), [{ en: "alert", ja: "アラート" }]);
+  assert.equal(parseGlossaryCsv(GLOSSARY_TEMPLATE).length, 3);
+});
+
+test("English terms match whole words in any case, with a plural", () => {
+  const entries = parseGlossaryCsv("Notable Event,注目すべきイベント\nalert,アラート\nES,拡張セキュリティ\nSOAR,");
+  const text = "uid_0001\n[0]Notable  events[/0] and ALERTS in ESG";
+  assert.deepEqual(matchGlossary(entries, text, "en-ja").map((e) => e.en), ["Notable Event", "alert"]);
+  assert.deepEqual(matchGlossary(entries, "ES and SOAR.", "en-ja").map((e) => e.en), ["ES", "SOAR"]);
+});
+
+test("Japanese terms match across width, spacing and a closing long-vowel mark", () => {
+  assert.equal(normalizeJa("サーバー"), normalizeJa("ｻｰﾊﾞ"));
+  assert.equal(normalizeJa("データ・センター"), normalizeJa("データセンタ"));
+  assert.notEqual(normalizeJa("コード"), normalizeJa("コド"));
+  const entries = parseGlossaryCsv("server,サーバー\nNotable Event,注目すべきイベント\nalert,アラート");
+  const text = "ｻｰﾊﾞの 注目すべき イベント";
+  assert.deepEqual(matchGlossary(entries, text, "ja-en").map((e) => e.ja), ["サーバー", "注目すべきイベント"]);
+});
+
+test("only matched terms become a glossary rule, in the direction's order", () => {
+  const entries = parseGlossaryCsv("alert,アラート\nalert,警告\nSplunk,\nunused,未使用");
+  const toJa = buildPromptRules({ direction: "en-ja", glossary: matchGlossary(entries, "Splunk alert", "en-ja") });
+  assert.match(toJa, /用語集/);
+  assert.match(toJa, /alert → アラート \/ 警告\(文脈に合うものを使う\)/);
+  assert.match(toJa, /Splunk\(訳さず、原文のまま残す\)/);
+  assert.doesNotMatch(toJa, /unused/);
+  const toEn = buildPromptRules({ direction: "ja-en", glossary: matchGlossary(entries, "アラートの件", "ja-en") });
+  assert.match(toEn, /アラート → alert/);
+  assert.doesNotMatch(buildPromptRules({ direction: "en-ja", glossary: [] }), /用語集/);
+});

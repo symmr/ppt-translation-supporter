@@ -28,6 +28,21 @@ const pdfOutputRow = document.getElementById("pdfOutputRow");
 const pdfOutputSelect = document.getElementById("pdfOutputSelect");
 const fontRow = document.getElementById("fontRow");
 const fontSummary = document.getElementById("fontSummary");
+const openGlossaryBtn = document.getElementById("openGlossaryBtn");
+const glossaryHeadCount = document.getElementById("glossaryHeadCount");
+const glossaryUsedBtn = document.getElementById("glossaryUsedBtn");
+const glossaryDialog = document.getElementById("glossaryDialog");
+const glossaryInput = document.getElementById("glossaryInput");
+const glossaryLoaded = document.getElementById("glossaryLoaded");
+const glossaryName = document.getElementById("glossaryName");
+const glossaryTotal = document.getElementById("glossaryTotal");
+const glossaryMatchBox = document.getElementById("glossaryMatchBox");
+const glossaryMatchLabel = document.getElementById("glossaryMatchLabel");
+const glossaryMatchList = document.getElementById("glossaryMatchList");
+const glossarySample = document.getElementById("glossarySample");
+const glossaryNote = document.getElementById("glossaryNote");
+const glossaryPickBtn = document.getElementById("glossaryPickBtn");
+const glossaryDeleteBtn = document.getElementById("glossaryDeleteBtn");
 
 const KEEP_VALUE = "";
 const CUSTOM_VALUE = "__custom__";
@@ -39,6 +54,7 @@ const PROMPT_STORAGE_KEYS = {
   "ja-en": "ppt-translation-supporter:prompt:ja-en",
 };
 const OPTIONS_STORAGE_KEY = "ppt-translation-supporter:options";
+const GLOSSARY_STORAGE_KEY = "ppt-translation-supporter:glossary";
 const styleSelect = document.getElementById("styleSelect");
 const amountUnitSelect = document.getElementById("amountUnitSelect");
 const jaStyleRow = document.getElementById("jaStyleRow");
@@ -56,6 +72,8 @@ const directionSelect = document.getElementById("directionSelect");
 let lastDirection = DEFAULT_DIRECTION;
 // The user's part of the prompt; the rules from the options follow it.
 let basePrompt = "";
+let glossary = null;
+let glossaryMatchMemo = {};
 // Set once the user picks a direction by hand; detection then leaves it alone
 // until the next file is dropped.
 let directionPinned = false;
@@ -321,6 +339,111 @@ function populateOptions() {
   amountUnitSelect.value = saved.amountUnit;
 }
 
+// The glossary is kept in the browser as the CSV text, and parsed again on load.
+function loadGlossary() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(GLOSSARY_STORAGE_KEY) || "null");
+    if (saved && typeof saved.csv === "string") {
+      const entries = parseGlossaryCsv(saved.csv);
+      if (entries.length) return { name: saved.name || "glossary.csv", csv: saved.csv, entries };
+    }
+  } catch (_) {
+    // unreadable storage: start without a glossary
+  }
+  return null;
+}
+
+function storeGlossary(next) {
+  try {
+    if (next) {
+      localStorage.setItem(GLOSSARY_STORAGE_KEY, JSON.stringify({ name: next.name, csv: next.csv }));
+    } else {
+      localStorage.removeItem(GLOSSARY_STORAGE_KEY);
+    }
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+// Matching runs only when the glossary, the extract or the direction changes,
+// not on every option change.
+function matchedGlossary() {
+  if (!glossary || !extracted) return [];
+  const direction = currentDirection();
+  const memo = glossaryMatchMemo;
+  if (memo.glossary === glossary && memo.text === extracted.text && memo.direction === direction) {
+    return memo.matched;
+  }
+  const matched = matchGlossary(glossary.entries, extracted.text, direction);
+  glossaryMatchMemo = { glossary, text: extracted.text, direction, matched };
+  return matched;
+}
+
+// Excel saves CSV as Shift_JIS unless told otherwise, so UTF-8 is tried first
+// and Shift_JIS is the fallback.
+function decodeCsv(buffer) {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(buffer);
+  } catch (_) {
+    return new TextDecoder("shift_jis").decode(buffer);
+  }
+}
+
+function setGlossaryNote(text, kind = "ok") {
+  glossaryNote.textContent = text || "";
+  glossaryNote.className = `msg ${kind}`;
+  glossaryNote.hidden = !text;
+}
+
+function syncGlossaryUi(matched) {
+  const loaded = Boolean(glossary);
+  glossaryHeadCount.textContent = loaded ? `${glossary.entries.length} 語` : "";
+  glossaryUsedBtn.hidden = !matched.length;
+  glossaryUsedBtn.textContent = `用語集 ${matched.length} 語を使用`;
+
+  glossaryLoaded.hidden = !loaded;
+  glossarySample.hidden = loaded;
+  glossaryDeleteBtn.hidden = !loaded;
+  glossaryPickBtn.textContent = loaded ? "別の CSV に差し替え" : "CSV を選択";
+  if (!loaded) return;
+  glossaryName.textContent = glossary.name;
+  glossaryTotal.textContent = `${glossary.entries.length} 語`;
+  glossaryMatchBox.hidden = !extracted;
+  glossaryMatchLabel.textContent = `このファイルで使う語　${matched.length}`;
+  const toJa = currentDirection() !== "ja-en";
+  glossaryMatchList.replaceChildren(...matched.map((e) => {
+    const li = document.createElement("li");
+    const source = toJa ? e.en : e.ja;
+    const target = toJa ? e.ja : e.en;
+    li.textContent = target ? `${source} → ${target}` : `${source}（訳さない）`;
+    return li;
+  }));
+}
+
+async function readGlossaryFile(file) {
+  let entries;
+  let csv;
+  try {
+    csv = decodeCsv(await file.arrayBuffer());
+    entries = parseGlossaryCsv(csv);
+  } catch (err) {
+    logError("用語集の読み込み", err);
+    setGlossaryNote(`読み込みに失敗しました（${err.name || "Error"}）`, "error");
+    return;
+  }
+  if (!entries.length) {
+    setGlossaryNote(`${file.name} に用語がありません`, "error");
+    return;
+  }
+  glossary = { name: file.name, csv, entries };
+  const stored = storeGlossary(glossary);
+  refreshRules();
+  setGlossaryNote(stored
+    ? `${file.name} を読み込みました　${entries.length} 語`
+    : "ブラウザに保存できませんでした。ページを閉じるまで使えます", stored ? "ok" : "warn");
+}
+
 function titleIds() {
   return extracted ? extracted.metadata.filter((item) => item.title).map((item) => item.id) : [];
 }
@@ -361,14 +484,17 @@ function refreshRules() {
     : "為替換算する（米ドル → 円）";
   fxFields.hidden = !fxEnabled.checked;
   if (fxEnabled.checked) renderFxSource();
+  const matched = matchedGlossary();
   const rules = buildPromptRules({
     direction,
     style: styleSelect.value,
     amountUnit: amountUnitSelect.value,
     titleIds: titleIds(),
     fx: fxOptions(),
+    glossary: matched,
   });
   promptBox.value = buildFullPrompt(basePrompt, rules);
+  syncGlossaryUi(matched);
   syncFoldBadges();
 }
 
@@ -1013,6 +1139,32 @@ fxRate.addEventListener("input", () => {
   refreshRules();
 });
 fxFetchBtn.addEventListener("click", fetchFxRate);
+
+// Glossary: a modal opened from the page header or from the "used" line.
+function openGlossary() {
+  setGlossaryNote("");
+  syncGlossaryUi(matchedGlossary());
+  if (!glossaryDialog.open) glossaryDialog.showModal();
+}
+openGlossaryBtn.addEventListener("click", openGlossary);
+glossaryUsedBtn.addEventListener("click", openGlossary);
+document.getElementById("closeGlossaryBtn").addEventListener("click", () => glossaryDialog.close());
+glossaryPickBtn.addEventListener("click", () => glossaryInput.click());
+glossaryInput.addEventListener("change", async () => {
+  const file = glossaryInput.files?.[0];
+  glossaryInput.value = "";
+  if (file) await readGlossaryFile(file);
+});
+document.getElementById("glossaryTemplateBtn").addEventListener("click", () => {
+  downloadBlob(new Blob([`\uFEFF${GLOSSARY_TEMPLATE}`], { type: "text/csv;charset=utf-8" }), "glossary_template.csv");
+});
+glossaryDeleteBtn.addEventListener("click", () => {
+  glossary = null;
+  storeGlossary(null);
+  refreshRules();
+  setGlossaryNote("削除しました");
+});
+glossary = loadGlossary();
 basePrompt = loadStoredPrompt() || defaultPrompt();
 refreshRules();
 document.getElementById("resetPromptBtn").addEventListener("click", () => {

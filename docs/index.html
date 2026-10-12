@@ -58,7 +58,23 @@
       /* bottom padding keeps the fixed message area from covering content */
       padding: 2rem 1.25rem 8rem;
     }
-    h1 { font-size: 1.5rem; margin: 0 0 0.6rem; }
+    h1 { font-size: 1.5rem; margin: 0; }
+    .page-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 1rem;
+      margin-bottom: 0.6rem;
+    }
+    .link-btn {
+      border: none;
+      background: none;
+      padding: 0.2rem 0;
+      color: var(--accent);
+      font-size: 0.9rem;
+      cursor: pointer;
+    }
+    .link-btn:hover { text-decoration: underline; }
     .lede { margin: 0 0 1.5rem; }
     .flow {
       list-style: none;
@@ -414,7 +430,47 @@
       background: transparent;
       color: var(--text);
     }
-    #ocrDialog::backdrop { background: rgba(0, 0, 0, 0.45); }
+    #ocrDialog::backdrop,
+    #glossaryDialog::backdrop { background: rgba(0, 0, 0, 0.45); }
+    #glossaryDialog {
+      width: min(560px, calc(100vw - 2rem));
+      max-width: calc(100vw - 2rem);
+      margin: auto;
+      padding: 0;
+      border: none;
+      background: transparent;
+      color: var(--text);
+    }
+    .glossary-file { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: baseline; margin: 0.5rem 0; }
+    .glossary-file .meta { margin: 0; }
+    .glossary-sample {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 0.6rem 0;
+      font-size: 0.85rem;
+    }
+    .glossary-sample th,
+    .glossary-sample td {
+      border: 1px solid var(--border);
+      padding: 0.3rem 0.5rem;
+      text-align: left;
+    }
+    .glossary-sample th { background: var(--bg); font-weight: 600; }
+    .glossary-sample .empty { color: var(--muted); }
+    .glossary-rules { list-style: none; margin: 0.6rem 0; padding: 0; display: grid; gap: 0.3rem; }
+    .glossary-list {
+      list-style: none;
+      margin: 0.3rem 0 0.6rem;
+      padding: 0.4rem 0.6rem;
+      max-height: 12rem;
+      overflow: auto;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg);
+      font-size: 0.85rem;
+    }
+    #glossaryNote { margin: 0.6rem 0 0; box-shadow: none; }
+    #glossaryNote[hidden] { display: none; }
     .ocr-sheet {
       background: var(--surface);
       border: 1px solid var(--border);
@@ -507,7 +563,10 @@
 </head>
 <body>
   <main>
-    <h1>Translation Supporter</h1>
+    <div class="page-head">
+      <h1>Translation Supporter</h1>
+      <button type="button" class="link-btn" id="openGlossaryBtn">用語集<span class="count" id="glossaryHeadCount"></span></button>
+    </div>
     <ol class="flow">
       <li>テキストを抽出</li>
       <li>ChatGPT や Claude で翻訳</li>
@@ -608,6 +667,7 @@
       </div>
       <div class="opt-toggles">
         <label class="check"><input type="checkbox" id="fxEnabled"><span id="fxLabel">為替換算する</span></label>
+        <button type="button" class="link-btn" id="glossaryUsedBtn" hidden></button>
         <div id="fxFields" class="fx-box" hidden>
           <div class="fx-rate-row">
             <span>1 USD =</span>
@@ -693,6 +753,44 @@
 
     <input id="fileInput" type="file" accept=".pptx,.docx,.pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf">
     <input id="txtInput" type="file" accept=".txt,text/plain">
+    <input id="glossaryInput" type="file" accept=".csv,text/csv" hidden>
+
+    <dialog id="glossaryDialog" aria-labelledby="glossaryTitle">
+      <div class="ocr-sheet">
+        <div class="ocr-head">
+          <h3 id="glossaryTitle">用語集</h3>
+          <button type="button" id="closeGlossaryBtn">閉じる</button>
+        </div>
+        <div id="glossaryLoaded" hidden>
+          <p class="glossary-file"><strong id="glossaryName"></strong><span class="meta" id="glossaryTotal"></span></p>
+          <div id="glossaryMatchBox" hidden>
+            <p class="meta" id="glossaryMatchLabel"></p>
+            <ul class="glossary-list" id="glossaryMatchList"></ul>
+          </div>
+        </div>
+        <table class="glossary-sample" id="glossarySample">
+          <thead><tr><th>英語</th><th>日本語</th></tr></thead>
+          <tbody>
+            <tr><td>Notable Event</td><td>注目すべきイベント</td></tr>
+            <tr><td>risk-based alerting</td><td>リスクベースアラート</td></tr>
+            <tr><td>Splunk</td><td class="empty">（空）</td></tr>
+          </tbody>
+        </table>
+        <ul class="glossary-rules">
+          <li class="note"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18"/><path d="M12 4v16"/></svg>CSV の 2 列　1 行目の「英語,日本語」は省略可</li>
+          <li class="note"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/></svg>訳語が空の行は訳さずに残す</li>
+          <li class="note"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 5h18l-7 8v6l-4 2v-8z"/></svg>ファイルに出てくる語だけを使用</li>
+          <li class="note"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>用語集はブラウザ内に保存</li>
+          <li class="note"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>LLM による解釈のため、必ず守られるとは限らない</li>
+        </ul>
+        <p class="msg ok" id="glossaryNote" role="status" aria-live="polite" hidden></p>
+        <div class="row">
+          <button type="button" class="primary" id="glossaryPickBtn">CSV を選択</button>
+          <button type="button" id="glossaryTemplateBtn">ひな形をダウンロード</button>
+          <button type="button" id="glossaryDeleteBtn" hidden>削除</button>
+        </div>
+      </div>
+    </dialog>
 
     <p class="disclaimer">
       本ツールのご利用および処理結果については、利用者ご自身の責任において行ってください。
