@@ -146,6 +146,7 @@
     }
     .dropzone p { margin: 0.2rem 0 0; color: var(--muted); font-size: 0.9rem; }
     .dropzone strong { color: var(--text); font-size: 1rem; }
+    #pasteBox.is-drag { border-color: var(--accent); background: var(--drop); }
     .row {
       display: flex;
       flex-wrap: wrap;
@@ -628,13 +629,11 @@
         </div>
       </div>
 
-      <div class="dropzone" id="txtDrop" tabindex="0" role="button" style="margin-top:0.9rem;">
-        <strong>訳文の .txt を選択</strong>
-      </div>
-      <label for="pasteBox" style="display:block;margin-top:0.9rem;">訳文を貼り付け</label>
+      <label for="pasteBox" style="display:block;margin-top:0.9rem;">LLM の返答を貼り付け</label>
       <textarea id="pasteBox" class="preview-box" placeholder="uid_0001&#10;訳文&#10;uid_0002&#10;…"></textarea>
       <div class="row">
         <button type="button" class="primary" id="applyPasteBtn">書き戻す</button>
+        <button type="button" id="txtDrop">.txt から書き戻す</button>
       </div>
       <p class="meta" id="txtMeta" hidden></p>
     </section>

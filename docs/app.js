@@ -864,6 +864,25 @@ bindDrop(pptxDrop, handlePptx, (file) => isSourceName(file.name));
 bindDrop(txtDrop, handleTxt, (file) => file.name.toLowerCase().endsWith(".txt"));
 pptxDrop.addEventListener("pick", () => fileInput.click());
 txtDrop.addEventListener("pick", () => txtInput.click());
+// A .txt dropped on the paste box is applied like a picked one, instead of the
+// browser opening the file.
+pasteBox.addEventListener("dragover", (event) => {
+  if (!event.dataTransfer?.types?.includes("Files")) return;
+  event.preventDefault();
+  pasteBox.classList.add("is-drag");
+});
+pasteBox.addEventListener("dragleave", () => pasteBox.classList.remove("is-drag"));
+pasteBox.addEventListener("drop", async (event) => {
+  const file = event.dataTransfer?.files?.[0];
+  if (!file) return;
+  event.preventDefault();
+  pasteBox.classList.remove("is-drag");
+  if (!file.name.toLowerCase().endsWith(".txt")) {
+    show(errorMsg, "対応していないファイルです。");
+    return;
+  }
+  await handleTxt(file);
+});
 fileInput.addEventListener("change", () => {
   const file = fileInput.files?.[0];
   if (file) handlePptx(file);
