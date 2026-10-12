@@ -26,8 +26,6 @@ const bodyFontPreview = document.getElementById("bodyFontPreview");
 const imageTools = document.getElementById("imageTools");
 const pdfOutputRow = document.getElementById("pdfOutputRow");
 const pdfOutputSelect = document.getElementById("pdfOutputSelect");
-const pdfOutputNote = document.getElementById("pdfOutputNote");
-const fontNote = document.getElementById("fontNote");
 const fontRow = document.getElementById("fontRow");
 
 const KEEP_VALUE = "";
@@ -55,7 +53,6 @@ const rulesBox = document.getElementById("rulesBox");
 let fxOrigin = { name: "", site: "", date: "" };
 let fxFetchFailed = false;
 const directionSelect = document.getElementById("directionSelect");
-const directionNote = document.getElementById("directionNote");
 let lastDirection = DEFAULT_DIRECTION;
 // Set once the user picks a direction by hand; detection then leaves it alone
 // until the next file is dropped.
@@ -213,10 +210,6 @@ function defaultFont() {
   return defaultFontFor(currentDirection());
 }
 
-function syncFontNote() {
-  fontNote.textContent = `書き戻すときにフォントを指定できます。既定は ${defaultFont()} です。元のファイルのフォントをそのまま使う場合は「指定しない」を選んでください。`;
-}
-
 // Moves a picker to the new direction's default only while it still sits on the
 // old direction's default; a font the user picked is left alone.
 function followDirectionFont(previous) {
@@ -231,7 +224,6 @@ function followDirectionFont(previous) {
     customInput.hidden = selectEl.value !== CUSTOM_VALUE;
     updateFontPreview(selectEl, customInput, previewEl);
   }
-  syncFontNote();
 }
 
 function defaultPrompt() {
@@ -264,7 +256,6 @@ function populateDirectionSelect() {
   for (const { id, label } of TRANSLATION_DIRECTIONS) addOption(directionSelect, id, label);
   directionSelect.value = DEFAULT_DIRECTION;
   lastDirection = DEFAULT_DIRECTION;
-  syncFontNote();
 }
 
 // Switches direction and what follows it: the prompt shown, the default font
@@ -335,21 +326,17 @@ function renderFxSource() {
   fxSource.textContent = "";
   if (!validFxRate(fxRate.value)) {
     fxSource.textContent = fxFetchFailed
-      ? "レートを取得できませんでした。手入力してください。"
-      : "レートを入力するか、「最新のレートを取得」を押してください。";
+      ? "レートを取得できませんでした"
+      : "";
     return;
   }
-  if (!fxOrigin.name) {
-    fxSource.textContent = "手入力のレートです。";
-    return;
-  }
-  fxSource.append("取得元: ");
+  if (!fxOrigin.name) return;
   const link = document.createElement("a");
   link.href = fxOrigin.site;
   link.target = "_blank";
   link.rel = "noopener noreferrer";
   link.textContent = fxOrigin.name;
-  fxSource.append(link, `、${fxOrigin.date} 時点`);
+  fxSource.append(link, `　${fxOrigin.date} 時点`);
 }
 
 // Rebuilds the rules section from the current choices. Called on every change,
@@ -411,9 +398,6 @@ function autoSelectDirection(text) {
   if (directionPinned) return;
   const found = detectDirection(text);
   setDirection(found.direction);
-  const label = TRANSLATION_DIRECTIONS.find((d) => d.id === found.direction).label;
-  const reason = found.ja > 0 ? "日本語の文字が含まれるため" : "日本語の文字が含まれないため";
-  show(directionNote, `${reason}「${label}」を選びました。違う場合は変更してください。`);
 }
 
 function bindDrop(zone, onFile, acceptTest) {
@@ -445,10 +429,10 @@ function bindDrop(zone, onFile, acceptTest) {
 async function copyText(text) {
   try {
     await navigator.clipboard.writeText(text);
-    show(okMsg, "コピーしました。");
+    show(okMsg, "コピーしました");
   } catch (err) {
     logError("クリップボードへのコピー", err);
-    show(errorMsg, `コピーに失敗しました（${err.name || "Error"}）。テキストを選択して手動でコピーしてください。`);
+    show(errorMsg, `コピーに失敗しました（${err.name || "Error"}）`);
   }
 }
 
@@ -534,11 +518,6 @@ function syncOutputUi() {
   const overlay = isPdf && pdfOutput() === "pdf";
   imageTools.hidden = isPdf;
   pdfOutputRow.hidden = !isPdf;
-  pdfOutputNote.hidden = !isPdf;
-  pdfOutputNote.textContent = overlay
-    ? `PDF の中の原文を消し、同じ位置に訳文を ${PDF_FONT_NAME} で書き込みます。背景や図形はそのまま残ります。枠に収まらない訳文は小さくなります。初回はフォント（約 5MB、太字があればもう 5MB）を読み込みます。`
-    : "ページ順に、訳文を1ブロック1段落で並べた Word 文書を作ります。図や表のレイアウトは引き継ぎません。";
-  fontNote.hidden = overlay;
   fontRow.hidden = overlay;
 }
 
@@ -616,7 +595,7 @@ async function handlePptx(file) {
   step4.hidden = true;
   setStepState(step4, "is-wait");
   txtMeta.hidden = true;
-  show(okMsg, "抽出しました。プロンプトと本文をコピーして翻訳し、訳文をドロップまたは貼り付けてください。");
+  show(okMsg, "抽出しました");
 }
 
 async function readPdf(file) {
@@ -742,7 +721,7 @@ async function applyTranslation(source, sourceLabel) {
     const bits = [];
     if (report.missing.length) bits.push(`不足 ${report.missing.slice(0, 8).join(", ")}${report.missing.length > 8 ? " …" : ""}`);
     if (report.extra.length) bits.push(`余分 ${report.extra.slice(0, 5).join(", ")}`);
-    mismatchNote = `uid が一致しません。見つかった分だけ書き戻します。${bits.join(" / ")}`;
+    mismatchNote = `uid が一致しません　${bits.join("　")}`;
   }
 
   // A new attempt invalidates the previous result, so a failure below can
@@ -793,7 +772,7 @@ async function applyTranslation(source, sourceLabel) {
     if (mismatchNote) notes.push(mismatchNote);
     if (flattened.length) {
       notes.push(
-        `タグ（[0]...[/0]）が原文と一致しないため、${flattened.length} 件は段落内の書式（色分けなど）を維持できませんでした: ` +
+        `${flattened.length} 件は段落内の書式を維持できませんでした　` +
         `${flattened.slice(0, 8).join(", ")}${flattened.length > 8 ? " …" : ""}`
       );
     }
@@ -807,21 +786,21 @@ async function applyTranslation(source, sourceLabel) {
     const overflowed = result.overflowed || [];
     if (overflowed.length) {
       notes.push(
-        `${overflowed.length} 件の訳文は元の枠に収まらず、枠の外まで書いています: ` +
+        `${overflowed.length} 件の訳文が枠からはみ出しています　` +
         `${overflowed.slice(0, 8).join(", ")}${overflowed.length > 8 ? " …" : ""}`
       );
     }
     const artifacts = result.tagArtifacts || [];
     if (artifacts.length) {
       notes.push(
-        `${artifacts.length} 件の訳文にタグ記法が残っています。そのまま書き戻したので、原文由来の表記ならそのままで問題ありません: ` +
+        `${artifacts.length} 件の訳文にタグ記法が残っています　` +
         `${artifacts.slice(0, 8).join(", ")}${artifacts.length > 8 ? " …" : ""}`
       );
     }
     if (notes.length) {
-      show(warnMsg, `${notes.join("。")}。書き戻しは完了しました。ダウンロードが始まらない場合はボタンを押してください。`);
+      show(warnMsg, `書き戻しました。${notes.join("。")}`);
     } else {
-      show(okMsg, "書き戻しました。ダウンロードが始まらない場合はボタンを押してください。");
+      show(okMsg, "書き戻しました");
     }
   } catch (err) {
     logError(`${kindLabel()} への書き戻し`, err);
@@ -850,7 +829,6 @@ function clearDeckState() {
   resultName = "";
   deckFonts = [];
   directionPinned = false;
-  show(directionNote, "");
   refreshRules();
   txtInput.value = "";
   txtMeta.hidden = true;
@@ -976,7 +954,6 @@ promptBox.addEventListener("input", () => storePrompt(promptBox.value));
 // Each direction keeps its own edited prompt; switching shows that one.
 directionSelect.addEventListener("change", () => {
   directionPinned = true;
-  show(directionNote, "");
   setDirection(directionSelect.value);
 });
 populateDirectionSelect();
@@ -1008,7 +985,7 @@ refreshRules();
 document.getElementById("resetPromptBtn").addEventListener("click", () => {
   promptBox.value = defaultPrompt();
   storePrompt(promptBox.value);
-  show(okMsg, "プロンプトを既定に戻しました。");
+  show(okMsg, "プロンプトを既定に戻しました");
 });
 
 (async function showVersion() {

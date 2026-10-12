@@ -410,7 +410,7 @@ async function startOcr() {
     showOcrReady(true);
     renderCandidates();
     outcome = "ok";
-    setOcrNote(`${fileName(pic.media)} を読みました。不要な行は消すか、一括削除を押してください。`);
+    setOcrNote(`${fileName(pic.media)} を読みました`);
   } catch (err) {
     if (token !== ocrToken) {
       outcome = "cancel";
@@ -454,7 +454,7 @@ async function openPanel() {
     if (!pictures.length) {
       const empty = document.createElement("p");
       empty.className = "meta";
-      empty.textContent = "貼られた png / jpeg / webp はありません。";
+      empty.textContent = "png / jpeg / webp の画像がありません";
       list.append(empty);
       return;
     }
@@ -604,13 +604,13 @@ async function applyBoxes() {
     hooks.applyExtract(extracted);
     markCards();
     closeOcrDialog();
-    const note = hadPaste ? " 以前貼った訳文は uid が変わるので消しました。" : "";
+    const note = hadPaste ? "　貼った訳文を消しました" : "";
     if (result.added && result.removed) {
-      hooks.showOk(`テキストボックスを ${result.added} 個に差し替え、抽出テキストを更新しました。${note}`);
+      hooks.showOk(`テキストボックスを ${result.added} 個に差し替えました${note}`);
     } else if (result.added) {
-      hooks.showOk(`テキストボックスを ${result.added} 個追加し、抽出テキストを更新しました。${note}`);
+      hooks.showOk(`テキストボックスを ${result.added} 個追加しました${note}`);
     } else {
-      hooks.showOk(`この画像のテキストボックスを外し、抽出テキストを更新しました。${note}`);
+      hooks.showOk(`この画像のテキストボックスを外しました${note}`);
     }
   } catch (err) {
     console.error("[ppt-translation-supporter] テキストボックス追加:", err);
@@ -851,7 +851,7 @@ async function ocrRegion(rect) {
     showOcrReady(true);
     renderCandidates();
     outcome = "ok";
-    setOcrNote("範囲を1件にしました。重なっていた行は置き換えています。");
+    setOcrNote("範囲を1件にしました");
   } catch (err) {
     if (token !== ocrToken) {
       outcome = "cancel";

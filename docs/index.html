@@ -59,7 +59,15 @@
       padding: 2rem 1.25rem 8rem;
     }
     h1 { font-size: 1.5rem; margin: 0 0 0.35rem; }
-    .lede { color: var(--muted); margin: 0 0 1.5rem; }
+    .lede { margin: 0 0 1.5rem; }
+    .note {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+    .note svg { flex: 0 0 auto; width: 1rem; height: 1rem; }
     .step {
       background: var(--surface);
       border: 1px solid var(--border);
@@ -250,7 +258,6 @@
       margin: 0 0 0.75rem;
       padding: 0.5rem 0.75rem;
       border-radius: 8px;
-      font-size: 0.85rem;
       background: var(--warn-bg);
       color: var(--warn-text);
     }
@@ -303,13 +310,6 @@
     button.image-card .badge { color: var(--muted); min-height: 1em; }
     #ocrNote { margin: 0.75rem 0 0; box-shadow: none; }
     #ocrNote[hidden] { display: none; }
-    .ocr-edit-head {
-      display: grid;
-      grid-template-columns: 160px minmax(0, 1fr);
-      gap: 0.45rem;
-      margin-top: 0.35rem;
-    }
-    .ocr-edit-head .meta { margin: 0; }
     #ocrList { list-style: none; margin: 0.15rem 0 0; padding: 0; }
     .ocr-row {
       display: grid;
@@ -436,7 +436,7 @@
 <body>
   <main>
     <h1>Translation Supporter</h1>
-    <p class="lede">ブラウザ内で PowerPoint（.pptx）、Word（.docx）、PDF（.pdf）のテキストを抽出し、翻訳文を書き戻します。<strong>翻訳自体はこのツールでは行いません。</strong>抽出したプロンプトと本文を ChatGPT や Claude などの LLM に渡し、返ってきた訳文をこのツールで書き戻してください。ファイルはサーバに送られません。</p>
+    <p class="lede note"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>ファイルはサーバに送られません</p>
 
     <section class="step" id="step1">
       <div class="step-head">
@@ -444,8 +444,8 @@
         <h2>ファイルを置く</h2>
       </div>
       <div class="dropzone" id="pptxDrop" tabindex="0" role="button">
-        <strong>ここにファイルをドロップ</strong>
-        <p>またはクリックして選択</p>
+        <strong>ファイルを選択</strong>
+        <p>.pptx　.docx　.pdf</p>
       </div>
       <p class="meta" id="pptxMeta" hidden></p>
     </section>
@@ -453,13 +453,12 @@
     <section class="step is-wait" id="step2" hidden>
       <div class="step-head">
         <span class="step-num">2</span>
-        <h2>テキスト抽出とプロンプト</h2>
+        <h2>LLM 用にコピー</h2>
       </div>
       <div id="imageTools">
         <div class="row">
           <button type="button" id="openImageBtn">画像からテキスト抽出</button>
         </div>
-        <p class="meta">画像を選択してください。自動抽出を押すとテキストを読み、テキストボックスとして被せます</p>
       </div>
       <div id="imagePanel" hidden>
         <div id="imageList" class="image-list"></div>
@@ -492,8 +491,7 @@
             </div>
             <button type="button" id="ocrNext" aria-label="次の画像">▶</button>
           </div>
-          <p class="ocr-callout">画像上をドラッグすると、囲んだ範囲だけを1件として読みます。</p>
-          <p class="meta">確認終わればページ下部の完了ボタンをクリックしてください</p>
+          <p class="ocr-callout note"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/></svg>ドラッグで囲んだ範囲を1件として読み取り</p>
           <div class="ocr-status-row" id="ocrStatusRow" hidden>
             <p class="meta" id="ocrStatus"></p>
             <button type="button" id="stopOcrBtn" data-busy-ok="1">停止</button>
@@ -507,26 +505,20 @@
             <div class="row">
               <button type="button" id="deleteAllBtn">一括削除</button>
             </div>
-            <div class="ocr-edit-head">
-              <span></span>
-              <p class="meta">抽出が不適切な場合は手動で編集してください</p>
-            </div>
             <ul id="ocrList"></ul>
           </div>
           <div class="row">
-            <button type="button" class="primary" id="applyImageBtn">完了</button>
+            <button type="button" class="primary" id="applyImageBtn">テキストボックスを載せる</button>
           </div>
         </div>
       </dialog>
       <p class="meta" id="extractMeta"></p>
-      <p class="meta">下のプロンプトと本文をコピーし、ChatGPT や Claude などの LLM に貼り付けて翻訳してください。返ってきた訳文は次のステップで貼り戻します。</p>
       <div class="opt-row">
         <div class="opt">
           <label for="directionSelect">翻訳の方向</label>
           <select id="directionSelect"></select>
         </div>
       </div>
-      <p class="meta" id="directionNote" hidden></p>
       <div class="opt-row" id="jaStyleRow">
         <div class="opt">
           <label for="styleSelect">本文の文体</label>
@@ -547,20 +539,20 @@
             <button type="button" id="fxFetchBtn">最新のレートを取得</button>
           </div>
           <p class="meta" id="fxSource"></p>
-          <p class="fx-note" id="fxNote">換算は LLM が計算するため、桁違いや丸めの誤りが起こりえます。レートは目安で、実際の取引レートとは異なります。換算した金額には「約」（英語では「~」）が付き、換算前の金額や注記は訳文に入りません。レートと時点を資料に明記する場合は、スライド側で追記してください。書き戻す前に、換算した金額を必ず確認してください。</p>
+          <p class="fx-note note" id="fxNote"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>換算は LLM の計算です。書き戻す前に金額を確認してください</p>
         </div>
       </div>
       <details class="glossary-box">
-        <summary>用語集（訳語の指定、訳さない語）</summary>
+        <summary>用語集</summary>
         <textarea id="glossaryBox" class="prompt-box" placeholder="Notable Event = 注目すべきイベント&#10;Splunk"></textarea>
-        <span class="hint">1 行に 1 語。「原語 = 訳語」で訳語を指定し、語だけを書くと訳さず原文のまま残します。内容はこのブラウザに保存されます。</span>
+        <span class="hint">原語 = 訳語　語だけの行は訳さずに残す</span>
       </details>
-      <label for="promptBox">翻訳プロンプト<span class="hint">（編集できます。文体、金額、為替、用語集は上の選択から作られるルールが優先されます。方向ごとに、編集した内容がこのブラウザに保存されます。方向はファイルの内容から自動で選ばれます）</span></label>
+      <label for="promptBox">翻訳プロンプト</label>
       <textarea id="promptBox" class="prompt-box"></textarea>
       <div class="row">
         <button type="button" id="resetPromptBtn">プロンプトを既定に戻す</button>
       </div>
-      <label for="rulesBox" style="display:block;margin-top:0.75rem;">プロンプトに追加されるルール<span class="hint">（上の選択から自動で作られます。編集はできません）</span></label>
+      <label for="rulesBox" style="display:block;margin-top:0.75rem;">追加ルール</label>
       <textarea id="rulesBox" class="preview-box" readonly></textarea>
       <label for="extractBox" style="display:block;margin-top:0.75rem;">抽出テキスト</label>
       <textarea id="extractBox" class="preview-box" readonly></textarea>
@@ -574,7 +566,7 @@
     <section class="step is-wait" id="step3" hidden>
       <div class="step-head">
         <span class="step-num">3</span>
-        <h2>翻訳したテキストを渡す</h2>
+        <h2>訳文を書き戻す</h2>
       </div>
       <div class="opt-row" id="pdfOutputRow" hidden>
         <div class="opt">
@@ -585,8 +577,6 @@
           </select>
         </div>
       </div>
-      <p class="meta" id="pdfOutputNote" hidden></p>
-      <p class="meta" id="fontNote">書き戻すときにフォントを指定できます。既定は Noto Sans JP です。元のファイルのフォントをそのまま使う場合は「指定しない」を選んでください。</p>
       <div class="opt-row" id="fontRow">
         <div class="opt">
           <label for="titleFontSelect">タイトル</label>
@@ -607,13 +597,12 @@
       </div>
 
       <div class="dropzone" id="txtDrop" tabindex="0" role="button" style="margin-top:0.9rem;">
-        <strong>ここに翻訳済み .txt をドロップ</strong>
-        <p>またはクリックして選択</p>
+        <strong>訳文の .txt を選択</strong>
       </div>
-      <label for="pasteBox" style="display:block;margin-top:0.9rem;">またはここに貼り付け</label>
+      <label for="pasteBox" style="display:block;margin-top:0.9rem;">訳文を貼り付け</label>
       <textarea id="pasteBox" class="preview-box" placeholder="uid_0001&#10;訳文&#10;uid_0002&#10;…"></textarea>
       <div class="row">
-        <button type="button" class="primary" id="applyPasteBtn">貼り付けたテキストで書き戻す</button>
+        <button type="button" class="primary" id="applyPasteBtn">書き戻す</button>
       </div>
       <p class="meta" id="txtMeta" hidden></p>
     </section>
