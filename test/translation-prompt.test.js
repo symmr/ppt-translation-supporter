@@ -77,3 +77,14 @@ test("detectDirection ignores Japanese-looking characters in uid lines and tags 
   assert.equal(detectDirection("uid_0001\nHello world").direction, "en-ja");
   assert.equal(detectDirection("[0]Hello[/0]").direction, "en-ja");
 });
+
+test("both prompts allow tags to move for a natural word order and ask for a review first", () => {
+  for (const id of ["en-ja", "ja-en"]) {
+    const prompt = TRANSLATION_PROMPTS[id];
+    assert.doesNotMatch(prompt, /番号・個数・順序/);
+    assert.match(prompt, /タグの並び順は.*入れ替えてよい/);
+    assert.match(prompt, /出力する前に全体を見直し/);
+    assert.match(prompt, /見直しの過程は出力しない/);
+  }
+});
+
