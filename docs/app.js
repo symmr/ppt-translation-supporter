@@ -49,6 +49,8 @@ const fxFetchBtn = document.getElementById("fxFetchBtn");
 const fxSource = document.getElementById("fxSource");
 const glossaryBox = document.getElementById("glossaryBox");
 const rulesBox = document.getElementById("rulesBox");
+const glossaryCount = document.getElementById("glossaryCount");
+const promptEdited = document.getElementById("promptEdited");
 // Where the rate in the box came from; typing a rate by hand clears it.
 let fxOrigin = { name: "", site: "", date: "" };
 let fxFetchFailed = false;
@@ -357,6 +359,15 @@ function refreshRules() {
     fx: fxOptions(),
     glossary: glossaryBox.value,
   });
+  syncFoldBadges();
+}
+
+// The glossary and the prompt sit in folded sections, so their summaries show
+// whether anything in them changes what gets copied.
+function syncFoldBadges() {
+  const terms = glossaryBox.value.split(/\r?\n/).filter((line) => line.trim()).length;
+  glossaryCount.textContent = terms ? String(terms) : "";
+  promptEdited.textContent = promptBox.value === defaultPrompt() ? "" : "編集済み";
 }
 
 // What gets copied: the editable prompt followed by the generated rules.
@@ -584,6 +595,7 @@ async function handlePptx(file) {
   autoSelectDirection(extracted.text);
   refreshRules();
   promptBox.value = loadStoredPrompt() || defaultPrompt();
+  syncFoldBadges();
   extractBox.value = extracted.text;
   resetFontPickers(deckFonts);
   syncOutputUi();
@@ -969,7 +981,10 @@ bindImageTools({
   },
 });
 
-promptBox.addEventListener("input", () => storePrompt(promptBox.value));
+promptBox.addEventListener("input", () => {
+  storePrompt(promptBox.value);
+  syncFoldBadges();
+});
 // Each direction keeps its own edited prompt; switching shows that one.
 directionSelect.addEventListener("change", () => {
   directionPinned = true;
@@ -1004,6 +1019,7 @@ refreshRules();
 document.getElementById("resetPromptBtn").addEventListener("click", () => {
   promptBox.value = defaultPrompt();
   storePrompt(promptBox.value);
+  syncFoldBadges();
   show(okMsg, "プロンプトを既定に戻しました");
 });
 
