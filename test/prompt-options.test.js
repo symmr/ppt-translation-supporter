@@ -10,7 +10,6 @@ const {
   FX_SOURCES,
   validFxRate,
   parseFxResponse,
-  parseGlossary,
   buildPromptRules,
   buildFullPrompt,
 } = require("../docs/prompt-options.js");
@@ -21,7 +20,6 @@ test("the defaults keep the previous behavior: 常体 and amounts as written", (
   assert.match(rules, /常体\(だ・である調\)/);
   assert.match(rules, /原文の表記のまま残す/);
   assert.doesNotMatch(rules, /為替換算/);
-  assert.doesNotMatch(rules, /用語集/);
 });
 
 test("the base English prompt no longer fixes a writing style", () => {
@@ -98,30 +96,15 @@ test("exchange rate Japanese to English divides and adds ~", () => {
   assert.match(rules, /範囲.*意味では使わない/);
 });
 
-test("glossary entries become rules, with and without a translation", () => {
-  assert.deepEqual(parseGlossary("Splunk\nrisk-based alerting = リスクベースアラート\n# memo\n\nES → 拡張セキュリティ\nA -> B\nC＝D"), [
-    { term: "Splunk", translation: "" },
-    { term: "risk-based alerting", translation: "リスクベースアラート" },
-    { term: "ES", translation: "拡張セキュリティ" },
-    { term: "A", translation: "B" },
-    { term: "C", translation: "D" },
-  ]);
-  const rules = buildPromptRules({ direction: "en-ja", glossary: "Splunk\nSOAR = SOAR(自動化)" });
-  assert.match(rules, /Splunk\(訳さず、原文のまま残す\)/);
-  assert.match(rules, /SOAR → SOAR\(自動化\)\(必ずこの訳語を使う\)/);
-});
-
 test("rules are numbered in order and declared to win over the base prompt", () => {
   const rules = buildPromptRules({
     direction: "en-ja",
     fx: { enabled: true, rate: 150 },
-    glossary: "x = y",
   });
   assert.match(rules, /^# 表記ルール（上のルールと食い違う場合は、こちらを優先する）/);
   assert.match(rules, /\n1\. 文体/);
   assert.match(rules, /\n2\. 金額/);
   assert.match(rules, /\n3\. 為替換算/);
-  assert.match(rules, /\n4\. 用語集/);
 });
 
 test("buildFullPrompt joins the base prompt and the rules with one blank line", () => {

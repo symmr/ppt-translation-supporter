@@ -47,9 +47,7 @@ const fxFields = document.getElementById("fxFields");
 const fxRate = document.getElementById("fxRate");
 const fxFetchBtn = document.getElementById("fxFetchBtn");
 const fxSource = document.getElementById("fxSource");
-const glossaryBox = document.getElementById("glossaryBox");
 const rulesBox = document.getElementById("rulesBox");
-const glossaryCount = document.getElementById("glossaryCount");
 const promptEdited = document.getElementById("promptEdited");
 // Where the rate in the box came from; typing a rate by hand clears it.
 let fxOrigin = { name: "", site: "", date: "" };
@@ -271,7 +269,7 @@ function setDirection(next) {
   refreshRules();
 }
 
-// Style, amount unit and glossary are preferences and are kept in the browser.
+// Style and amount unit are preferences and are kept in the browser.
 // The exchange rate is not: it goes stale.
 function loadOptions() {
   let saved = {};
@@ -284,7 +282,6 @@ function loadOptions() {
   return {
     style: pick(PROMPT_STYLES, saved.style, DEFAULT_PROMPT_OPTIONS.style),
     amountUnit: pick(PROMPT_AMOUNT_UNITS, saved.amountUnit, DEFAULT_PROMPT_OPTIONS.amountUnit),
-    glossary: typeof saved.glossary === "string" ? saved.glossary : "",
   };
 }
 
@@ -293,7 +290,6 @@ function storeOptions() {
     localStorage.setItem(OPTIONS_STORAGE_KEY, JSON.stringify({
       style: styleSelect.value,
       amountUnit: amountUnitSelect.value,
-      glossary: glossaryBox.value,
     }));
   } catch (_) {
     // a browser with storage blocked still works, the options just won't persist
@@ -308,7 +304,6 @@ function populateOptions() {
   const saved = loadOptions();
   styleSelect.value = saved.style;
   amountUnitSelect.value = saved.amountUnit;
-  glossaryBox.value = saved.glossary;
 }
 
 function titleIds() {
@@ -357,16 +352,13 @@ function refreshRules() {
     amountUnit: amountUnitSelect.value,
     titleIds: titleIds(),
     fx: fxOptions(),
-    glossary: glossaryBox.value,
   });
   syncFoldBadges();
 }
 
-// The glossary and the prompt sit in folded sections, so their summaries show
-// whether anything in them changes what gets copied.
+// The prompt sits in a folded section, so its summary shows when an edit
+// changes what gets copied.
 function syncFoldBadges() {
-  const terms = glossaryBox.value.split(/\r?\n/).filter((line) => line.trim()).length;
-  glossaryCount.textContent = terms ? String(terms) : "";
   promptEdited.textContent = promptBox.value === defaultPrompt() ? "" : "編集済み";
 }
 
@@ -1000,10 +992,6 @@ for (const el of [styleSelect, amountUnitSelect]) {
     refreshRules();
   });
 }
-glossaryBox.addEventListener("input", () => {
-  storeOptions();
-  refreshRules();
-});
 fxEnabled.addEventListener("change", async () => {
   refreshRules();
   // first time on: fill in the latest rate so it is not left empty

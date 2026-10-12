@@ -316,8 +316,6 @@
     .fold summary { cursor: pointer; color: var(--muted); }
     .fold summary:hover { color: var(--text); }
     .fold[open] summary { margin-bottom: 0.5rem; }
-    .glossary-box[open] { flex-basis: 100%; }
-    .glossary-box textarea { min-height: 5rem; }
     .count {
       margin-left: 0.4rem;
       padding: 0 0.4rem;
@@ -615,11 +613,6 @@
           <p class="meta" id="fxSource"></p>
           <p class="fx-note note" id="fxNote"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>換算は LLM の計算です。書き戻す前に金額を確認してください</p>
         </div>
-        <details class="fold glossary-box">
-          <summary>用語集<span class="count" id="glossaryCount"></span></summary>
-          <textarea id="glossaryBox" class="prompt-box" placeholder="Notable Event = 注目すべきイベント&#10;Splunk"></textarea>
-          <span class="hint">原語 = 訳語　語だけの行は訳さずに残す</span>
-        </details>
       </div>
       <div class="row copy-row">
         <button type="button" class="primary" id="copyAllBtn">プロンプト＋本文をコピー</button>
