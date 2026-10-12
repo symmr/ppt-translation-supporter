@@ -47,13 +47,14 @@ const fxFields = document.getElementById("fxFields");
 const fxRate = document.getElementById("fxRate");
 const fxFetchBtn = document.getElementById("fxFetchBtn");
 const fxSource = document.getElementById("fxSource");
-const rulesBox = document.getElementById("rulesBox");
 const promptEdited = document.getElementById("promptEdited");
 // Where the rate in the box came from; typing a rate by hand clears it.
 let fxOrigin = { name: "", site: "", date: "" };
 let fxFetchFailed = false;
 const directionSelect = document.getElementById("directionSelect");
 let lastDirection = DEFAULT_DIRECTION;
+// The user's part of the prompt; the rules from the options follow it.
+let basePrompt = "";
 // Set once the user picks a direction by hand; detection then leaves it alone
 // until the next file is dropped.
 let directionPinned = false;
@@ -264,7 +265,7 @@ function setDirection(next) {
   const previous = lastDirection;
   directionSelect.value = next;
   lastDirection = currentDirection();
-  promptBox.value = loadStoredPrompt() || defaultPrompt();
+  basePrompt = loadStoredPrompt() || defaultPrompt();
   followDirectionFont(previous);
   refreshRules();
 }
@@ -346,25 +347,21 @@ function refreshRules() {
     : "為替換算する（米ドル → 円）";
   fxFields.hidden = !fxEnabled.checked;
   if (fxEnabled.checked) renderFxSource();
-  rulesBox.value = buildPromptRules({
+  const rules = buildPromptRules({
     direction,
     style: styleSelect.value,
     amountUnit: amountUnitSelect.value,
     titleIds: titleIds(),
     fx: fxOptions(),
   });
+  promptBox.value = buildFullPrompt(basePrompt, rules);
   syncFoldBadges();
 }
 
 // The prompt sits in a folded section, so its summary shows when an edit
 // changes what gets copied.
 function syncFoldBadges() {
-  promptEdited.textContent = promptBox.value === defaultPrompt() ? "" : "編集済み";
-}
-
-// What gets copied: the editable prompt followed by the generated rules.
-function fullPrompt() {
-  return buildFullPrompt(promptBox.value, rulesBox.value);
+  promptEdited.textContent = basePrompt === defaultPrompt() ? "" : "編集済み";
 }
 
 // Latest USD/JPY from the first source that answers. Only the rate is fetched;
@@ -585,9 +582,8 @@ async function handlePptx(file) {
   extractMeta.textContent = extractSummary(extracted);
   syncResultLabels();
   autoSelectDirection(extracted.text);
+  basePrompt = loadStoredPrompt() || defaultPrompt();
   refreshRules();
-  promptBox.value = loadStoredPrompt() || defaultPrompt();
-  syncFoldBadges();
   extractBox.value = extracted.text;
   resetFontPickers(deckFonts);
   syncOutputUi();
@@ -900,7 +896,7 @@ document.getElementById("applyPasteBtn").addEventListener("click", () => {
 });
 
 document.getElementById("copyAllBtn").addEventListener("click", () => {
-  copyText(`${fullPrompt().trim()}\n\n${extractBox.value}`);
+  copyText(`${promptBox.value.trim()}\n\n${extractBox.value}`);
 });
 document.getElementById("downloadTxtBtn").addEventListener("click", () => {
   if (!extracted || !sourceFile) return;
@@ -970,8 +966,11 @@ bindImageTools({
   },
 });
 
+// Only the base part is kept: the rules are rebuilt from the options, so an
+// edit inside them lasts until the next option change.
 promptBox.addEventListener("input", () => {
-  storePrompt(promptBox.value);
+  basePrompt = basePromptOf(promptBox.value);
+  storePrompt(basePrompt);
   syncFoldBadges();
 });
 // Each direction keeps its own edited prompt; switching shows that one.
@@ -1000,11 +999,12 @@ fxRate.addEventListener("input", () => {
   refreshRules();
 });
 fxFetchBtn.addEventListener("click", fetchFxRate);
+basePrompt = loadStoredPrompt() || defaultPrompt();
 refreshRules();
 document.getElementById("resetPromptBtn").addEventListener("click", () => {
-  promptBox.value = defaultPrompt();
-  storePrompt(promptBox.value);
-  syncFoldBadges();
+  basePrompt = defaultPrompt();
+  storePrompt(basePrompt);
+  refreshRules();
   show(okMsg, "プロンプトを既定に戻しました");
 });
 

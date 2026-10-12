@@ -12,6 +12,7 @@ const {
   parseFxResponse,
   buildPromptRules,
   buildFullPrompt,
+  basePromptOf,
 } = require("../docs/prompt-options.js");
 const { TRANSLATION_PROMPT, extractTextsFromZip } = require("../docs/pptx-text.js");
 
@@ -110,6 +111,12 @@ test("rules are numbered in order and declared to win over the base prompt", () 
 test("buildFullPrompt joins the base prompt and the rules with one blank line", () => {
   assert.equal(buildFullPrompt("base\n", "rules\n"), "base\n\nrules\n");
   assert.equal(buildFullPrompt("base", ""), "base\n");
+});
+
+test("basePromptOf takes back the base prompt from the combined text", () => {
+  const rules = buildPromptRules({ direction: "en-ja", style: "plain", amountUnit: "kmb" });
+  assert.equal(basePromptOf(buildFullPrompt("edited base\n", rules)), "edited base\n");
+  assert.equal(basePromptOf("no rules here\n\n"), "no rules here\n");
 });
 
 test("validFxRate accepts positive numbers only", () => {

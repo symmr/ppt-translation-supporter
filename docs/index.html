@@ -331,6 +331,7 @@
     .prompt-fold { margin-top: 0.9rem; }
     .prompt-fold label { display: block; margin: 0.75rem 0 0.2rem; }
     .prompt-fold summary + label { margin-top: 0; }
+    #promptBox { min-height: 14rem; max-height: 28rem; }
     .opt select:disabled,
     .opt input:disabled { opacity: 0.45; }
     .font-preview {
@@ -625,8 +626,6 @@
         <div class="row">
           <button type="button" id="resetPromptBtn">プロンプトを既定に戻す</button>
         </div>
-        <label for="rulesBox">追加ルール</label>
-        <textarea id="rulesBox" class="preview-box" readonly></textarea>
         <label for="extractBox">抽出テキスト</label>
         <textarea id="extractBox" class="preview-box" readonly></textarea>
       </details>
