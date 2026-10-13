@@ -582,6 +582,10 @@ async function copyText(text) {
 const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 const PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
 
+// On touch devices a download that starts by itself only flashes a small
+// notice (Chrome on Android), so there the file waits for a tap in step 4.
+const TOUCH_DEVICE = typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
+
 function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -914,7 +918,8 @@ async function applyTranslation(source, sourceLabel) {
     step4.hidden = false;
     setStepState(step3, "is-done");
     setStepState(step4, "");
-    downloadBlob(resultBlob, resultName);
+    if (!TOUCH_DEVICE) downloadBlob(resultBlob, resultName);
+    step4.scrollIntoView({ behavior: "smooth", block: "center" });
 
     const notes = [];
     if (mismatchNote) notes.push(mismatchNote);
@@ -998,16 +1003,6 @@ function clearDeckState() {
   clearMessages();
 }
 
-function resetAll() {
-  clearDeckState();
-  sourceFile = null;
-  fileInput.value = "";
-  pptxMeta.hidden = true;
-  pptxMeta.textContent = "";
-  setDirection(DEFAULT_DIRECTION);
-  setStepState(step1, "");
-}
-
 bindDrop(pptxDrop, handlePptx, (file) => isSourceName(file.name));
 bindDrop(txtDrop, handleTxt, (file) => file.name.toLowerCase().endsWith(".txt"));
 pptxDrop.addEventListener("pick", () => fileInput.click());
@@ -1054,8 +1049,10 @@ document.getElementById("downloadTxtBtn").addEventListener("click", () => {
 document.getElementById("downloadPptxBtn").addEventListener("click", () => {
   if (!resultBlob) return;
   downloadBlob(resultBlob, resultName);
+  // Mobile browsers save without a dialog, so the page says it happened.
+  // Warnings from the write-back stay.
+  show(okMsg, `${resultName} をダウンロードしました`);
 });
-document.getElementById("resetBtn").addEventListener("click", resetAll);
 
 pdfOutputSelect.addEventListener("change", () => {
   syncOutputUi();

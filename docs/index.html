@@ -211,14 +211,18 @@
       cursor: pointer;
       transition: color 0.12s, border-color 0.12s, background 0.12s;
     }
-    button:hover, .btn:hover { color: var(--accent); border-color: var(--accent); }
+    @media (hover: hover) {
+      button:hover, .btn:hover { color: var(--accent); border-color: var(--accent); }
+    }
     button.primary, .btn.primary {
       background: var(--accent);
       border-color: var(--accent);
       color: var(--on-accent);
       box-shadow: var(--glow);
     }
-    button.primary:hover, .btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); color: var(--on-accent); }
+    @media (hover: hover) {
+      button.primary:hover, .btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); color: var(--on-accent); }
+    }
     :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     button:disabled {
       opacity: 0.45;
@@ -784,7 +788,6 @@
       <p class="meta" id="resultMeta"></p>
       <div class="row">
         <button type="button" class="primary" id="downloadPptxBtn">ファイルをダウンロード</button>
-        <button type="button" id="resetBtn">最初からやり直す</button>
       </div>
     </section>
 
