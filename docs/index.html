@@ -211,7 +211,9 @@
       cursor: pointer;
       transition: color 0.12s, border-color 0.12s, background 0.12s;
     }
-    button:hover, .btn:hover { color: var(--accent); border-color: var(--accent); }
+    @media (hover: hover) {
+      button:hover, .btn:hover { color: var(--accent); border-color: var(--accent); }
+    }
     button.primary, .btn.primary {
       background: var(--accent);
       border-color: var(--accent);
@@ -784,6 +786,7 @@
       <p class="meta" id="resultMeta"></p>
       <div class="row">
         <button type="button" class="primary" id="downloadPptxBtn">ファイルをダウンロード</button>
+        <button type="button" id="shareResultBtn" hidden>共有</button>
         <button type="button" id="resetBtn">最初からやり直す</button>
       </div>
     </section>

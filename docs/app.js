@@ -6,6 +6,7 @@ const step1 = document.getElementById("step1");
 const step2 = document.getElementById("step2");
 const step3 = document.getElementById("step3");
 const step4 = document.getElementById("step4");
+const shareResultBtn = document.getElementById("shareResultBtn");
 const pptxMeta = document.getElementById("pptxMeta");
 const extractMeta = document.getElementById("extractMeta");
 const txtMeta = document.getElementById("txtMeta");
@@ -582,6 +583,23 @@ async function copyText(text) {
 const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 const PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
 
+// On touch devices a download that starts by itself only flashes a small
+// notice (Chrome on Android), so there the file waits for a tap in step 4,
+// next to a share button when the device can hand files to other apps.
+const TOUCH_DEVICE = typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
+
+function resultFile() {
+  return new File([resultBlob], resultName, { type: resultBlob.type });
+}
+
+function canShareResult() {
+  try {
+    return Boolean(resultBlob && navigator.canShare && navigator.canShare({ files: [resultFile()] }));
+  } catch (_) {
+    return false;
+  }
+}
+
 function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -914,7 +932,9 @@ async function applyTranslation(source, sourceLabel) {
     step4.hidden = false;
     setStepState(step3, "is-done");
     setStepState(step4, "");
-    downloadBlob(resultBlob, resultName);
+    shareResultBtn.hidden = !canShareResult();
+    if (!TOUCH_DEVICE) downloadBlob(resultBlob, resultName);
+    step4.scrollIntoView({ behavior: "smooth", block: "center" });
 
     const notes = [];
     if (mismatchNote) notes.push(mismatchNote);
@@ -1054,6 +1074,16 @@ document.getElementById("downloadTxtBtn").addEventListener("click", () => {
 document.getElementById("downloadPptxBtn").addEventListener("click", () => {
   if (!resultBlob) return;
   downloadBlob(resultBlob, resultName);
+});
+shareResultBtn.addEventListener("click", async () => {
+  if (!resultBlob) return;
+  try {
+    await navigator.share({ files: [resultFile()], title: resultName });
+  } catch (err) {
+    if (err && err.name === "AbortError") return;
+    logError("共有", err);
+    show(errorMsg, `共有できませんでした（${err.name || "Error"}）`);
+  }
 });
 document.getElementById("resetBtn").addEventListener("click", resetAll);
 
