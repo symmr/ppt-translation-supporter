@@ -220,7 +220,9 @@
       color: var(--on-accent);
       box-shadow: var(--glow);
     }
-    button.primary:hover, .btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); color: var(--on-accent); }
+    @media (hover: hover) {
+      button.primary:hover, .btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); color: var(--on-accent); }
+    }
     :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     button:disabled {
       opacity: 0.45;

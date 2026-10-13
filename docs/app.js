@@ -1049,6 +1049,9 @@ document.getElementById("downloadTxtBtn").addEventListener("click", () => {
 document.getElementById("downloadPptxBtn").addEventListener("click", () => {
   if (!resultBlob) return;
   downloadBlob(resultBlob, resultName);
+  // Mobile browsers save without a dialog, so the page says it happened.
+  // Warnings from the write-back stay.
+  show(okMsg, `${resultName} をダウンロードしました`);
 });
 
 pdfOutputSelect.addEventListener("change", () => {
