@@ -576,13 +576,20 @@ async function copyText(text) {
   }
 }
 
+// Office files are zips, and a blob left as application/zip is saved as .zip
+// by browsers that name downloads from the type (Chrome on Android), so each
+// output carries its own type.
+const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+const PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+
 function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
   a.download = filename;
   a.click();
-  URL.revokeObjectURL(url);
+  // Revoking at once can cancel a download that has not started yet on mobile.
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
 
 function isDocxName(name) {
@@ -780,7 +787,7 @@ async function writePdfResult(translations, fonts) {
     setProgress("Word 文書を作成中…");
     const built = buildDocxFromPdf(JSZip, extracted, translations, fonts);
     const blob = await built.zip.generateAsync(
-      { type: "blob", compression: "DEFLATE", compressionOptions: { level: 6 } },
+      { type: "blob", mimeType: DOCX_MIME, compression: "DEFLATE", compressionOptions: { level: 6 } },
       (meta) => setProgress(`Word 文書を生成中… ${Math.round(meta.percent)}%`)
     );
     return { blob, result: built };
@@ -891,6 +898,7 @@ async function applyTranslation(source, sourceLabel) {
       blob = await zip.generateAsync(
         {
           type: "blob",
+          mimeType: sourceKind === "docx" ? DOCX_MIME : PPTX_MIME,
           compression: "DEFLATE",
           compressionOptions: { level: 6 },
         },
