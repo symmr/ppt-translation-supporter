@@ -82,7 +82,7 @@
       /* bottom padding keeps the fixed message area from covering content */
       padding: 3.5rem 1.25rem 8rem;
     }
-    h1 { font-size: 2.25rem; font-weight: 600; line-height: 1.15; letter-spacing: -0.8px; margin: 0; }
+    h1 { font-size: 2.5rem; font-weight: 600; line-height: 46px; letter-spacing: -0.8px; margin: 0; }
     h1, h2 { font-feature-settings: "palt"; }
     @media (max-width: 768px) {
       h1 { font-size: 1.75rem; letter-spacing: -0.5px; }
@@ -289,13 +289,20 @@
     @media (prefers-reduced-motion: reduce) {
       .msg.busy::before { animation: none; }
     }
-    .disclaimer, .app-version {
+    .disclaimer {
+      margin: 1rem 0 0;
+      font-size: 0.75rem;
       color: var(--muted);
-      font-size: 0.8rem;
+      line-height: 1.45;
+    }
+    .app-version {
       margin: 1.25rem 0 0;
+      font-size: 0.75rem;
+      color: var(--muted);
       text-align: center;
     }
-    .app-version a { color: inherit; }
+    .app-version a { color: var(--muted); }
+    .app-version a:hover { color: var(--accent); }
     .hint { color: var(--muted); font-size: 0.8rem; font-weight: normal; }
     .opt-row {
       display: flex;
@@ -832,9 +839,7 @@
       </div>
     </dialog>
 
-    <p class="disclaimer">
-      本ツールのご利用および処理結果については、利用者ご自身の責任において行ってください。
-    </p>
+    <p class="disclaimer">ご利用は自己責任でお願いします。</p>
     <p class="app-version" id="appVersionLine" hidden>
       <a href="https://github.com/symmr/ppt-translation-supporter/" target="_blank" rel="noopener noreferrer">GitHub</a>
       · <span id="appVersion"></span>
