@@ -87,13 +87,15 @@
     @media (max-width: 768px) {
       h1 { font-size: 1.75rem; letter-spacing: -0.5px; }
     }
+    .page-header { margin-bottom: 1.5rem; }
     .page-head {
       display: flex;
       align-items: baseline;
       justify-content: space-between;
       gap: 1rem;
-      margin-bottom: 1rem;
+      margin-bottom: 0.5rem;
     }
+    .lead { margin: 0 0 0.4rem; font-size: 14px; line-height: 22.75px; }
     .link-btn {
       border: none;
       background: none;
@@ -106,7 +108,7 @@
       box-shadow: none;
     }
     .link-btn:hover { background: none; color: var(--accent-hover); text-decoration: underline; }
-    .lede { margin: 0 0 2.5rem; }
+    .lede { margin: 0; }
     .flow {
       list-style: none;
       counter-reset: flow;
@@ -136,8 +138,10 @@
       display: flex;
       align-items: center;
       gap: 0.4rem;
+      margin: 0;
       color: var(--muted);
-      font-size: 0.9rem;
+      font-size: 14px;
+      line-height: 22.75px;
     }
     .note svg { flex: 0 0 auto; width: 1rem; height: 1rem; }
     .step {
@@ -611,16 +615,19 @@
 </head>
 <body>
   <main>
-    <div class="page-head">
-      <h1>Translation Supporter</h1>
-      <button type="button" class="link-btn" id="openGlossaryBtn">用語集<span class="count" id="glossaryHeadCount"></span></button>
-    </div>
+    <header class="page-header">
+      <div class="page-head">
+        <h1>Translation Supporter</h1>
+        <button type="button" class="link-btn" id="openGlossaryBtn">用語集<span class="count" id="glossaryHeadCount"></span></button>
+      </div>
+      <p class="lead">AIで翻訳するためにテキスト抜き出しと書き戻しを行います</p>
+      <p class="note"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>ファイルはサーバに送られません</p>
+    </header>
     <ol class="flow">
       <li>テキストを抽出</li>
       <li>ChatGPT や Claude で翻訳</li>
       <li>訳文を書き戻す</li>
     </ol>
-    <p class="lede note"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>ファイルはサーバに送られません</p>
 
     <section class="step" id="step1">
       <div class="step-head">
